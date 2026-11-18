@@ -3,3 +3,58 @@
 //   sqlc v1.31.1
 
 package db
+
+import (
+	"encoding/json"
+	"time"
+)
+
+type WorkDependency struct {
+	WorkItemID  string    `json:"work_item_id"`
+	BlockedByID string    `json:"blocked_by_id"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type WorkEvent struct {
+	ID         int64           `json:"id"`
+	WorkItemID string          `json:"work_item_id"`
+	At         time.Time       `json:"at"`
+	ActorKind  string          `json:"actor_kind"`
+	ActorID    string          `json:"actor_id"`
+	Type       string          `json:"type"`
+	FromState  *string         `json:"from_state"`
+	ToState    *string         `json:"to_state"`
+	Payload    json.RawMessage `json:"payload"`
+}
+
+type WorkItem struct {
+	ID             string    `json:"id"`
+	Source         *string   `json:"source"`
+	ExternalID     *string   `json:"external_id"`
+	ExternalUrl    *string   `json:"external_url"`
+	Title          string    `json:"title"`
+	Body           string    `json:"body"`
+	Repos          []string  `json:"repos"`
+	State          string    `json:"state"`
+	Stage          string    `json:"stage"`
+	StateReason    string    `json:"state_reason"`
+	Priority       int32     `json:"priority"`
+	Attempts       int32     `json:"attempts"`
+	OutputsDone    bool      `json:"outputs_done"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	StateChangedAt time.Time `json:"state_changed_at"`
+}
+
+type WorkOutput struct {
+	ID         int64     `json:"id"`
+	WorkItemID string    `json:"work_item_id"`
+	Repo       string    `json:"repo"`
+	Kind       string    `json:"kind"`
+	Branch     string    `json:"branch"`
+	Url        string    `json:"url"`
+	Sha        string    `json:"sha"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}

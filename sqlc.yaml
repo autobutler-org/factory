@@ -26,3 +26,5 @@ sql:
             go_type:
               type: time.Time
               pointer: true
+          - db_type: jsonb
+            go_type: encoding/json.RawMessage
