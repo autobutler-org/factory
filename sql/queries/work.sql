@@ -1,7 +1,9 @@
 -- name: InsertItem :one
-INSERT INTO work_items (source, external_id, external_url, title, body, repos, state, priority)
-VALUES (sqlc.narg(source), sqlc.narg(external_id), sqlc.narg(external_url), @title, @body, @repos::text[], @state, @priority)
-ON CONFLICT (source, external_id) DO NOTHING
+-- Conflicts on (source, external_id) or idempotency_key insert nothing.
+INSERT INTO work_items (source, external_id, external_url, title, body, repos, state, priority, idempotency_key)
+VALUES (sqlc.narg(source), sqlc.narg(external_id), sqlc.narg(external_url), @title, @body, @repos::text[], @state, @priority,
+        sqlc.narg(idempotency_key))
+ON CONFLICT DO NOTHING
 RETURNING *;
 
 -- name: GetItem :one
@@ -12,6 +14,9 @@ SELECT * FROM work_items WHERE id = @id FOR UPDATE;
 
 -- name: GetItemBySourceForUpdate :one
 SELECT * FROM work_items WHERE source = @source AND external_id = @external_id FOR UPDATE;
+
+-- name: GetItemByIdempotencyKeyForUpdate :one
+SELECT * FROM work_items WHERE idempotency_key = @idempotency_key FOR UPDATE;
 
 -- name: GetItemBySource :one
 SELECT * FROM work_items WHERE source = @source AND external_id = @external_id;

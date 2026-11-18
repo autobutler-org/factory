@@ -44,6 +44,7 @@ type WorkItem struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	StateChangedAt time.Time `json:"state_changed_at"`
+	IdempotencyKey *string   `json:"idempotency_key"`
 }
 
 type WorkOutput struct {

@@ -30,6 +30,7 @@ Usage:
 
 Commands:
   migrate     Apply, roll back, or report the database migrations.
+  serve       Serve the HTTP API.
   version     Print the version stamped into this binary.
 
 Run 'factory <command> --help' for a command's usage.
@@ -52,6 +53,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "migrate":
 		return migrateMain(ctx, args[1:], stdout, stderr)
+	case "serve":
+		return serveMain(ctx, args[1:], stdout, stderr)
 	case "version":
 		return versionMain(args[1:], stdout, stderr)
 	}

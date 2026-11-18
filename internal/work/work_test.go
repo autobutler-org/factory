@@ -481,3 +481,43 @@ func TestListFiltersAndPages(t *testing.T) {
 		t.Errorf("bad state filter: %v, want ErrInvalid", err)
 	}
 }
+
+func TestIdempotencyKey(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	in := work.NewItem{Title: "cron job", IdempotencyKey: "run-42"}
+	first, err := svc.Upsert(ctx, in, user)
+	if err != nil || !first.Created {
+		t.Fatalf("first: %+v, %v", first, err)
+	}
+	again, err := svc.Upsert(ctx, in, user)
+	if err != nil || again.Created || again.Item.ID != first.Item.ID {
+		t.Fatalf("repeat: %+v, %v; want the first item", again, err)
+	}
+	other, err := svc.Upsert(ctx, work.NewItem{Title: "cron job"}, user)
+	if err != nil || !other.Created || other.Item.ID == first.Item.ID {
+		t.Fatalf("no key: %+v, %v; want a new item", other, err)
+	}
+}
+
+func TestUpsertWithBlockedBy(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	byID := mustCreate(t, svc, work.NewItem{Title: "a"})
+	bySource := mustCreate(t, svc, work.NewItem{Title: "b", Source: "github", ExternalID: "o/r#9"})
+	res, err := svc.Upsert(ctx, work.NewItem{Title: "c", BlockedBy: []string{byID.ID, "github:o/r#9"}}, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps, err := svc.Dependencies(ctx, res.Item.ID)
+	if err != nil || len(deps) != 2 || !slices.Contains(deps, byID.ID) || !slices.Contains(deps, bySource.ID) {
+		t.Fatalf("dependencies = %v, %v", deps, err)
+	}
+	if _, err := svc.Upsert(ctx, work.NewItem{Title: "d", BlockedBy: []string{"github:o/r#404"}}, user); !errors.Is(err, work.ErrNotFound) {
+		t.Fatalf("unknown blocked_by: %v, want ErrNotFound", err)
+	}
+	items, _, _ := svc.List(ctx, work.Filter{})
+	if len(items) != 3 {
+		t.Fatalf("%d items; the failed upsert must create nothing", len(items))
+	}
+}
