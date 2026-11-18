@@ -6,9 +6,8 @@ on:
   push:
     branches:
       - main
+  # Every base branch, so each pull request in a stack is checked too.
   pull_request:
-    branches:
-      - main
 
 # A newer push to a pull request cancels its older run. Pushes to main, merge
 # queue runs, and manual runs get a group of their own and always finish.
@@ -39,3 +38,30 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make test/race
+
+  # The database tests skip without Postgres, so they run here against a
+  # service container with the user, password and database compose.yaml gives
+  # a developer; make test/db builds the same URL for both.
+  test-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: factory
+          POSTGRES_PASSWORD: factory
+          POSTGRES_DB: factory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U factory -d factory"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: make test/db

@@ -35,6 +35,12 @@ DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 GOLINT_ARGS ?= --config .golangci.yml
 
+# The development Postgres from compose.yaml. CI runs the same user, password and
+# database as a service container, so this URL reaches both.
+POSTGRES_PORT ?= 5432
+export POSTGRES_PORT
+TEST_DATABASE_URL ?= postgres://factory:factory@127.0.0.1:$(POSTGRES_PORT)/factory?sslmode=disable
+
 # Rejected in a pull request's title, description, and commit messages.
 ATTRIBUTION_PATTERN := generated (with|by) \[?claude|co-authored-by:.*(claude|anthropic)|claude\.ai/code/session_
 
@@ -52,6 +58,19 @@ watch: ## Rebuild and restart ./build/factory on every change
 		--build.cmd "$(MAKE) build" \
 		--build.entrypoint "$(EXE)" \
 		--build.exclude_dir ".github,build,docs,tmp"
+
+.PHONY: serve/postgres
+serve/postgres: ## Start the development Postgres from compose.yaml in the background (stop: make clean/postgres)
+	if ! docker info >/dev/null 2>&1; then
+		echo "Docker is not running. Start Docker Desktop (or the docker daemon), then run \`make serve/postgres\` again."
+		exit 1
+	fi
+	docker compose up --detach --wait postgres
+	echo "Postgres is up on 127.0.0.1:$(POSTGRES_PORT). Run \`make test/db\`, or export FACTORY_DATABASE_URL='$(TEST_DATABASE_URL)'."
+
+.PHONY: clean/postgres
+clean/postgres: ## Stop the development Postgres and keep its data
+	docker compose down
 
 ##@ Build
 
@@ -73,6 +92,11 @@ clean: ## Remove build output
 test: ## Run the tests
 	$(GO) test ./...
 
+# -count=1 because the database is not an input go's test cache can see.
+.PHONY: test/db
+test/db: ## Run every test, the database tests included, against Postgres (start it with make serve/postgres)
+	FACTORY_DATABASE_URL='$(TEST_DATABASE_URL)' $(GO) test -race -count=1 ./...
+
 .PHONY: test/race
 test/race: ## Run the tests with the race detector
 	$(GO) test -race ./...
@@ -80,7 +104,7 @@ test/race: ## Run the tests with the race detector
 ##@ Code Quality
 
 .PHONY: check
-check: check/format check/tidy check/lint test ## Check formatting, tidiness, lint, and tests without changing files
+check: check/format check/tidy check/lint check/sqlc check/migrations test ## Check formatting, tidiness, lint, and tests without changing files
 
 .PHONY: check/format
 check/format: ## Fail if any Go file needs formatting
@@ -93,6 +117,37 @@ check/lint: ## Run golangci-lint without fixing
 .PHONY: check/tidy
 check/tidy: ## Fail if go mod tidy would change go.mod or go.sum
 	$(GO) mod tidy -diff || { echo "go.mod and go.sum are not tidy (run \`make tidy\`)."; exit 1; }
+
+.PHONY: check/sqlc
+check/sqlc: ## Fail if the generated sqlc code in internal/db is stale
+	$(GO) tool sqlc diff || { echo "Generated sqlc code is stale (run \`make generate/sqlc\` and commit the result)."; exit 1; }
+
+.PHONY: check/migrations
+check/migrations: ## Fail if a migration lacks its up or down file, or the numbering has a gap
+	cd internal/db/migrations
+	expected=1
+	for up in $$(ls *.up.sql | sort); do
+		number=$${up%%_*}
+		if [[ ! "$$number" =~ ^[0-9]{3}$$ ]]; then
+			echo "internal/db/migrations/$$up: name it NNN_name.up.sql with a three-digit number."
+			exit 1
+		fi
+		if (( 10#$$number != expected )); then
+			echo "internal/db/migrations/$$up: expected number $$(printf %03d $$expected). Renumber it so there is no gap or repeat."
+			exit 1
+		fi
+		if [[ ! -f "$${up%.up.sql}.down.sql" ]]; then
+			echo "internal/db/migrations/$$up has no $${up%.up.sql}.down.sql. Add one that undoes it."
+			exit 1
+		fi
+		expected=$$((expected + 1))
+	done
+	for down in *.down.sql; do
+		if [[ ! -f "$${down%.down.sql}.up.sql" ]]; then
+			echo "internal/db/migrations/$$down has no $${down%.down.sql}.up.sql. Add it or delete the down file."
+			exit 1
+		fi
+	done
 
 .PHONY: check/vuln
 check/vuln: ## Fail on reachable known vulnerabilities (needs network, so not part of make check)
@@ -122,6 +177,10 @@ check/attribution: ## Fail if a pull request carries AI attribution (PR=number)
 		exit 1
 	fi
 	echo "Pull request #$(PR) carries no AI attribution."
+
+.PHONY: generate/sqlc
+generate/sqlc: ## Generate the Go code in internal/db from sql/queries and the migrations
+	$(GO) tool sqlc generate
 
 .PHONY: format
 format: ## Format Go code (gci, gofumpt, goimports)

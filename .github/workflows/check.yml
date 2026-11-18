@@ -6,9 +6,8 @@ on:
   push:
     branches:
       - main
+  # Every base branch, so each pull request in a stack is checked too.
   pull_request:
-    branches:
-      - main
 
 # A newer push to a pull request cancels its older run. Pushes to main, merge
 # queue runs, and manual runs get a group of their own and always finish.

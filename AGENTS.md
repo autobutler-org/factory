@@ -12,14 +12,18 @@ Postgres, hands it to agent workers in our Kubernetes cluster, and shows what is
 ```text
 cmd/factory/        the binary: parses arguments, dispatches subcommands, maps errors to exit codes
 internal/           business logic, one package per concern; no package needs HTTP or CLI context
+internal/db/        pgx pool, embedded golang-migrate migrations (migrations/), sqlc output (generated)
+internal/db/dbtest/ NewDB(t): a Postgres schema per test with the real migrations applied
+sql/queries/        the SQL sqlc compiles into internal/db
+compose.yaml        the development Postgres, on loopback
 web/                the web UI, embedded in the binary (#14)
 docs/               architecture and operator docs
 build/              build output (./build/factory); not source
-.github/workflows/  ci.yml (build, race tests), check.yml (make check, govulncheck, attribution),
+.github/workflows/  ci.yml (build, race tests, test-db on Postgres), check.yml (make check, govulncheck, attribution),
                     pr-title.yml, auto-assign-author.yml
 ```
 
-`internal/`, `web/`, and `docs/` do not exist yet. The issue that first needs each one creates it.
+`web/` and `docs/` do not exist yet. The issue that first needs each one creates it.
 
 ## Use Makefile targets (always)
 
@@ -32,7 +36,7 @@ comment so `make help` lists it.
 | `make build`     | builds `./build/factory` with version, commit, and date stamped in            |
 | `make test`      | `go test ./...`                                                               |
 | `make test/race` | the tests under the race detector, as CI runs them                            |
-| `make check`     | `check/format`, `check/tidy`, `check/lint`, then `test`; changes no files     |
+| `make check`     | `check/format`, `check/tidy`, `check/lint`, `check/sqlc`, `check/migrations`, then `test`; changes no files |
 | `make format`    | `golangci-lint fmt` (gci, gofumpt, goimports); rewrites files                 |
 | `make fix`       | applies lint autofixes, then formats                                          |
 | `make tidy`      | `go mod tidy`                                                                 |
@@ -40,6 +44,7 @@ comment so `make help` lists it.
 - The Go version is pinned once, on the `go` line of `go.mod`. The Makefile reads it into `GOTOOLCHAIN`.
 - Dev tools (golangci-lint, gofumpt, gci, goimports, govulncheck, air) are `tool` directives in `go.mod` and
   run as `go tool <name>`. Do not install them globally or pin them anywhere else.
+- sqlc is a `tool` directive too (`go tool sqlc`). It needs cgo, which the default macOS and Linux toolchains have.
 - `.golangci.yml` enables only linters that have an autofix. Run `make format`, `make tidy`, and `make check`
   before pushing, and commit whatever the first two changed.
 
@@ -99,3 +104,14 @@ Write plainly, in American spelling.
 - Build what the issue asks for. No flags, config keys, packages, or abstractions nobody requested.
 - Advice is not a request for edits. When asked to review, explain, or plan, answer and touch no files.
 - Never start, stop, or restart a server or worker yourself, and do not run `make watch`. Tests are fine to run.
+
+## Database
+
+- Postgres is the only store. Configure it with `FACTORY_DATABASE_URL` (or `--database-url`).
+- Migrations are `internal/db/migrations/NNN_name.up.sql` and `.down.sql`, numbered from `001` with no gaps,
+  embedded in the binary and applied with `factory migrate up`. Never edit a migration that has been merged;
+  add a new one.
+- Queries live in `sql/queries`. Run `make generate/sqlc` after changing a query or a migration and commit the
+  generated code. No ORM.
+- Database tests call `dbtest.NewDB(t)`. Under `make test` they skip; `make serve/postgres && make test/db` runs
+  them, and CI's `test-db` job runs them against a Postgres service container.
