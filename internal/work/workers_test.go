@@ -23,15 +23,6 @@ func register(t *testing.T, svc *work.Service, name string, caps ...string) db.W
 	return w
 }
 
-func claimNext(t *testing.T, svc *work.Service, workerID string) (db.WorkItem, bool) {
-	t.Helper()
-	item, ok, err := svc.ClaimNext(context.Background(), workerID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return item, ok
-}
-
 // age moves a column of an item into the past, standing in for the clock.
 func age(t *testing.T, pool *pgxpool.Pool, id, column string, by time.Duration) {
 	t.Helper()
@@ -87,7 +78,7 @@ func TestFiftyClaimersTenItems(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
 	for i := range 10 {
-		mustCreate(t, svc, work.NewItem{Title: fmt.Sprint("item ", i)})
+		mustCreate(t, svc, work.NewItem{Title: fmt.Sprint("item ", i), Repos: []string{"o/a"}})
 	}
 	workers := make([]db.Worker, 50)
 	for i := range workers {
@@ -99,7 +90,7 @@ func TestFiftyClaimersTenItems(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, w := range workers {
 		wg.Go(func() {
-			item, ok, err := svc.ClaimNext(ctx, w.ID)
+			c, ok, err := svc.ClaimStep(ctx, w.ID, "")
 			if err != nil {
 				t.Error(err)
 				return
@@ -109,10 +100,10 @@ func TestFiftyClaimersTenItems(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if other, dup := claimed[item.ID]; dup {
-				t.Errorf("item %s claimed by %s and %s", item.ID, other, w.ID)
+			if other, dup := claimed[c.Item.ID]; dup {
+				t.Errorf("item %s claimed by %s and %s", c.Item.ID, other, w.ID)
 			}
-			claimed[item.ID] = w.ID
+			claimed[c.Item.ID] = w.ID
 		})
 	}
 	wg.Wait()
@@ -124,11 +115,12 @@ func TestFiftyClaimersTenItems(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if item.State != work.InProgress || item.ClaimedBy == nil || *item.ClaimedBy != by {
-			t.Errorf("item %s: state %s claimed by %v, want in_progress by %s", id, item.State, item.ClaimedBy, by)
+		ws := step(t, svc, id, "o/a/workspace")
+		if item.State != work.InProgress || ws.ClaimedBy == nil || *ws.ClaimedBy != by {
+			t.Errorf("item %s: state %s, workspace claimed by %v, want in_progress by %s", id, item.State, ws.ClaimedBy, by)
 		}
-		if n := count(eventTypes(t, svc, id), work.EventClaimed); n != 1 {
-			t.Errorf("item %s has %d claim events, want 1", id, n)
+		if n := count(eventTypes(t, svc, id), work.EventStepClaimed); n != 1 {
+			t.Errorf("item %s has %d step claim events, want 1", id, n)
 		}
 	}
 }
@@ -136,27 +128,30 @@ func TestFiftyClaimersTenItems(t *testing.T) {
 func TestClaimOrderCapabilitiesAndDependencies(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
-	low := mustCreate(t, svc, work.NewItem{Title: "low", Priority: 1})
-	high := mustCreate(t, svc, work.NewItem{Title: "high", Priority: 5})
-	gpu := mustCreate(t, svc, work.NewItem{Title: "needs gpu", Priority: 9, Requires: []string{"gpu"}})
+	repos := []string{"o/a"}
+	low := mustCreate(t, svc, work.NewItem{Title: "low", Priority: 1, Repos: repos})
+	high := mustCreate(t, svc, work.NewItem{Title: "high", Priority: 5, Repos: repos})
+	gpu := mustCreate(t, svc, work.NewItem{Title: "needs gpu", Priority: 9, Requires: []string{"gpu"}, Repos: repos})
 	blocker := mustCreate(t, svc, work.NewItem{Title: "blocker", State: work.Design})
-	blocked := mustCreate(t, svc, work.NewItem{Title: "blocked", Priority: 8})
+	blocked := mustCreate(t, svc, work.NewItem{Title: "blocked", Priority: 8, Repos: repos})
 	if err := svc.AddDependency(ctx, blocked.ID, blocker.ID, user); err != nil {
 		t.Fatal(err)
 	}
 	plain := register(t, svc, "plain")
 
-	for _, want := range []string{high.ID, low.ID} {
-		got, ok := claimNext(t, svc, plain.ID)
-		if !ok || got.ID != want {
-			t.Fatalf("claimed %q (%v), want %q", got.Title, ok, want)
+	// One worker per claim: a worker could take the next step of the item
+	// it just claimed otherwise, but that step is not ready yet anyway.
+	for i, want := range []string{high.ID, low.ID} {
+		got, ok := claimStep(t, svc, register(t, svc, fmt.Sprint("plain", i)).ID, "")
+		if !ok || got.Item.ID != want {
+			t.Fatalf("claimed %q (%v), want %q", got.Item.Title, ok, want)
 		}
 	}
-	if got, ok := claimNext(t, svc, plain.ID); ok {
-		t.Fatalf("claimed %q; the rest need a gpu or have an unfinished dependency", got.Title)
+	if got, ok := claimStep(t, svc, plain.ID, ""); ok {
+		t.Fatalf("claimed %q; the rest need a gpu, have an unfinished dependency, or have a step running", got.Item.Title)
 	}
-	if got, ok := claimNext(t, svc, register(t, svc, "gpu-box", "gpu").ID); !ok || got.ID != gpu.ID {
-		t.Fatalf("gpu worker claimed %q (%v), want the gpu item", got.Title, ok)
+	if got, ok := claimStep(t, svc, register(t, svc, "gpu-box", "gpu").ID, ""); !ok || got.Item.ID != gpu.ID {
+		t.Fatalf("gpu worker claimed %q (%v), want the gpu item", got.Item.Title, ok)
 	}
 	if _, err := svc.Claim(ctx, blocked.ID, plain.ID); !errors.Is(err, work.ErrUnfinishedDependencies) {
 		t.Fatalf("claiming blocked work directly: %v, want ErrUnfinishedDependencies", err)
@@ -164,7 +159,7 @@ func TestClaimOrderCapabilitiesAndDependencies(t *testing.T) {
 	if _, err := svc.Claim(ctx, high.ID, plain.ID); !errors.Is(err, work.ErrIllegalTransition) {
 		t.Fatalf("claiming claimed work: %v, want ErrIllegalTransition", err)
 	}
-	if _, _, err := svc.ClaimNext(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, work.ErrNotFound) {
+	if _, _, err := svc.ClaimStep(ctx, "00000000-0000-0000-0000-000000000000", ""); !errors.Is(err, work.ErrNotFound) {
 		t.Fatalf("unknown worker: %v, want ErrNotFound", err)
 	}
 }
@@ -205,8 +200,8 @@ func TestLeaseExpiryTakeover(t *testing.T) {
 	svc, pool := newService(t)
 	item := mustCreate(t, svc, work.NewItem{Title: "t"})
 	a, b := register(t, svc, "a"), register(t, svc, "b")
-	if _, ok := claimNext(t, svc, a.ID); !ok {
-		t.Fatal("a claimed nothing")
+	if _, err := svc.Claim(ctx, item.ID, a.ID); err != nil {
+		t.Fatal(err)
 	}
 	held, err := svc.Heartbeat(ctx, a.ID)
 	if err != nil || len(held) != 1 || held[0] != item.ID {
@@ -230,9 +225,8 @@ func TestLeaseExpiryTakeover(t *testing.T) {
 		t.Fatalf("after expiry: %s claimed by %v attempts %d; want ready, unclaimed, no attempt", got.State, got.ClaimedBy, got.Attempts)
 	}
 
-	taken, ok := claimNext(t, svc, b.ID)
-	if !ok || taken.ID != item.ID {
-		t.Fatal("b did not take over the item")
+	if _, err := svc.Claim(ctx, item.ID, b.ID); err != nil {
+		t.Fatalf("b did not take over the item: %v", err)
 	}
 	if mine, _, err := svc.List(ctx, work.Filter{ClaimedBy: b.ID}); err != nil || len(mine) != 1 {
 		t.Fatalf("list claimed by b: %d, %v", len(mine), err)
@@ -256,12 +250,12 @@ func TestStuckWorkCountsAttemptsUntilFailed(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)
 	svc = svc.WithPolicy(lease.Policy{Lease: time.Minute, StuckAfter: time.Hour, MaxAttempts: 2, RetryDelay: time.Minute})
-	item := mustCreate(t, svc, work.NewItem{Title: "t"})
+	item := mustCreate(t, svc, work.NewItem{Title: "t", Repos: []string{"o/a"}})
 	w := register(t, svc, "w")
 
 	for attempt := 1; attempt <= 2; attempt++ {
-		if _, ok := claimNext(t, svc, w.ID); !ok {
-			t.Fatalf("attempt %d: nothing to claim", attempt)
+		if _, err := svc.Claim(ctx, item.ID, w.ID); err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
 		}
 		if _, err := svc.Heartbeat(ctx, w.ID); err != nil {
 			t.Fatal(err)
@@ -284,7 +278,7 @@ func TestStuckWorkCountsAttemptsUntilFailed(t *testing.T) {
 		if got.State != work.Ready {
 			t.Fatalf("after attempt %d: %s, want ready", attempt, got.State)
 		}
-		if _, ok := claimNext(t, svc, w.ID); ok {
+		if _, ok := claimStep(t, svc, w.ID, ""); ok {
 			t.Fatal("a retried item was handed out before its retry delay")
 		}
 		age(t, pool, item.ID, "available_at", time.Hour)
@@ -372,14 +366,14 @@ func TestSilentWorkerIsMarkedGone(t *testing.T) {
 	if err != nil || report.Gone != 1 {
 		t.Fatalf("reap: %+v, %v; want one worker gone", report, err)
 	}
-	mustCreate(t, svc, work.NewItem{Title: "t"})
-	if _, _, err := svc.ClaimNext(ctx, w.ID); !errors.Is(err, work.ErrWorkerNotActive) {
+	mustCreate(t, svc, work.NewItem{Title: "t", Repos: []string{"o/a"}})
+	if _, _, err := svc.ClaimStep(ctx, w.ID, ""); !errors.Is(err, work.ErrWorkerNotActive) {
 		t.Fatalf("gone worker claiming: %v, want ErrWorkerNotActive", err)
 	}
 	if _, err := svc.Heartbeat(ctx, w.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := claimNext(t, svc, w.ID); !ok {
+	if _, ok := claimStep(t, svc, w.ID, ""); !ok {
 		t.Fatal("a worker that heartbeats again should be able to claim")
 	}
 }

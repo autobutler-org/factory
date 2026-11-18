@@ -1,0 +1,369 @@
+{
+  "template": "default",
+  "inputs_hash": "07f0a7631d4098385c6eb5e575bcdb9c759acdb42dc2b9c28c816d5f857d4880",
+  "steps": [
+    {
+      "key": "o/lib/workspace",
+      "kind": "workspace",
+      "params": {
+        "branch": "factory/b2e9c0de-0000-4000-8000-000000000001",
+        "repo": "o/lib"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "depends_on": []
+    },
+    {
+      "key": "o/lib/implement",
+      "kind": "implement",
+      "params": {
+        "repo": "o/lib"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "depends_on": [
+        "o/lib/workspace"
+      ]
+    },
+    {
+      "key": "o/lib/gate",
+      "kind": "gate",
+      "params": {
+        "repo": "o/lib"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "depends_on": [
+        "o/lib/implement"
+      ]
+    },
+    {
+      "key": "o/lib/secret_scan",
+      "kind": "secret_scan",
+      "params": {
+        "repo": "o/lib"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "depends_on": [
+        "o/lib/gate"
+      ]
+    },
+    {
+      "key": "o/lib/open_pr",
+      "kind": "open_pr",
+      "params": {
+        "repo": "o/lib"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "depends_on": [
+        "o/lib/secret_scan"
+      ]
+    },
+    {
+      "key": "o/lib/review-1",
+      "kind": "review",
+      "params": {
+        "last": false,
+        "repo": "o/lib",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "depends_on": [
+        "o/lib/open_pr"
+      ]
+    },
+    {
+      "key": "o/lib/fix-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/lib/review-1",
+        "repo": "o/lib",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "condition": "o/lib/review-1 == changes",
+      "depends_on": [
+        "o/lib/review-1"
+      ]
+    },
+    {
+      "key": "o/lib/review-2",
+      "kind": "review",
+      "params": {
+        "last": false,
+        "repo": "o/lib",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "condition": "o/lib/review-1 == changes",
+      "depends_on": [
+        "o/lib/fix-1"
+      ]
+    },
+    {
+      "key": "o/lib/fix-2",
+      "kind": "fix",
+      "params": {
+        "findings": "o/lib/review-2",
+        "repo": "o/lib",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "condition": "o/lib/review-2 == changes",
+      "depends_on": [
+        "o/lib/review-2"
+      ]
+    },
+    {
+      "key": "o/lib/review-3",
+      "kind": "review",
+      "params": {
+        "last": true,
+        "repo": "o/lib",
+        "round": 3
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "condition": "o/lib/review-2 == changes",
+      "depends_on": [
+        "o/lib/fix-2"
+      ]
+    },
+    {
+      "key": "o/lib/await_checks-1",
+      "kind": "await_checks",
+      "params": {
+        "last": false,
+        "repo": "o/lib",
+        "round": 1
+      },
+      "sandbox_key": "",
+      "depends_on": [
+        "o/lib/review-3"
+      ]
+    },
+    {
+      "key": "o/lib/fix-checks-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/lib/await_checks-1",
+        "repo": "o/lib",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "condition": "o/lib/await_checks-1 == fail",
+      "depends_on": [
+        "o/lib/await_checks-1"
+      ]
+    },
+    {
+      "key": "o/lib/await_checks-2",
+      "kind": "await_checks",
+      "params": {
+        "last": true,
+        "repo": "o/lib",
+        "round": 2
+      },
+      "sandbox_key": "",
+      "condition": "o/lib/await_checks-1 == fail",
+      "depends_on": [
+        "o/lib/fix-checks-1"
+      ]
+    },
+    {
+      "key": "o/lib/merge",
+      "kind": "merge",
+      "params": {
+        "repo": "o/lib"
+      },
+      "sandbox_key": "",
+      "depends_on": [
+        "o/lib/await_checks-2"
+      ]
+    },
+    {
+      "key": "o/app/workspace",
+      "kind": "workspace",
+      "params": {
+        "branch": "factory/b2e9c0de-0000-4000-8000-000000000001",
+        "repo": "o/app"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "depends_on": [
+        "o/lib/merge"
+      ]
+    },
+    {
+      "key": "o/app/implement",
+      "kind": "implement",
+      "params": {
+        "repo": "o/app"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "depends_on": [
+        "o/app/workspace"
+      ]
+    },
+    {
+      "key": "o/app/gate",
+      "kind": "gate",
+      "params": {
+        "repo": "o/app"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "depends_on": [
+        "o/app/implement"
+      ]
+    },
+    {
+      "key": "o/app/secret_scan",
+      "kind": "secret_scan",
+      "params": {
+        "repo": "o/app"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "depends_on": [
+        "o/app/gate"
+      ]
+    },
+    {
+      "key": "o/app/open_pr",
+      "kind": "open_pr",
+      "params": {
+        "repo": "o/app"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "depends_on": [
+        "o/app/secret_scan"
+      ]
+    },
+    {
+      "key": "o/app/review-1",
+      "kind": "review",
+      "params": {
+        "last": false,
+        "repo": "o/app",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "depends_on": [
+        "o/app/open_pr"
+      ]
+    },
+    {
+      "key": "o/app/fix-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/app/review-1",
+        "repo": "o/app",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "condition": "o/app/review-1 == changes",
+      "depends_on": [
+        "o/app/review-1"
+      ]
+    },
+    {
+      "key": "o/app/review-2",
+      "kind": "review",
+      "params": {
+        "last": false,
+        "repo": "o/app",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "condition": "o/app/review-1 == changes",
+      "depends_on": [
+        "o/app/fix-1"
+      ]
+    },
+    {
+      "key": "o/app/fix-2",
+      "kind": "fix",
+      "params": {
+        "findings": "o/app/review-2",
+        "repo": "o/app",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "condition": "o/app/review-2 == changes",
+      "depends_on": [
+        "o/app/review-2"
+      ]
+    },
+    {
+      "key": "o/app/review-3",
+      "kind": "review",
+      "params": {
+        "last": true,
+        "repo": "o/app",
+        "round": 3
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "condition": "o/app/review-2 == changes",
+      "depends_on": [
+        "o/app/fix-2"
+      ]
+    },
+    {
+      "key": "o/app/await_checks-1",
+      "kind": "await_checks",
+      "params": {
+        "last": false,
+        "repo": "o/app",
+        "round": 1
+      },
+      "sandbox_key": "",
+      "depends_on": [
+        "o/app/review-3"
+      ]
+    },
+    {
+      "key": "o/app/fix-checks-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/app/await_checks-1",
+        "repo": "o/app",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "condition": "o/app/await_checks-1 == fail",
+      "depends_on": [
+        "o/app/await_checks-1"
+      ]
+    },
+    {
+      "key": "o/app/await_checks-2",
+      "kind": "await_checks",
+      "params": {
+        "last": true,
+        "repo": "o/app",
+        "round": 2
+      },
+      "sandbox_key": "",
+      "condition": "o/app/await_checks-1 == fail",
+      "depends_on": [
+        "o/app/fix-checks-1"
+      ]
+    },
+    {
+      "key": "o/app/await_approval",
+      "kind": "await_approval",
+      "params": {
+        "repo": "o/app"
+      },
+      "sandbox_key": "",
+      "depends_on": [
+        "o/app/await_checks-2"
+      ]
+    },
+    {
+      "key": "o/app/merge",
+      "kind": "merge",
+      "params": {
+        "repo": "o/app"
+      },
+      "sandbox_key": "",
+      "depends_on": [
+        "o/app/await_approval"
+      ]
+    }
+  ]
+}

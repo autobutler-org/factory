@@ -3,6 +3,10 @@
 // machine. It is the only code that changes a work item's state, and every
 // state change writes a work_events row in the same transaction.
 //
+// It also stores each item's step graph (planned by internal/plan), leases
+// steps to workers, schedules the steps that follow, and derives the item's
+// state from its graph. See docs/architecture/graph.md.
+//
 // It does not speak HTTP or parse flags, and it does not decide who may call
 // it; callers pass an Actor that is recorded on each event. See
 // docs/architecture/work.md for the states and the rules.
@@ -452,6 +456,12 @@ func transition(ctx context.Context, q *db.Queries, item db.WorkItem, to, reason
 	updated, err := q.UpdateItemState(ctx, db.UpdateItemStateParams{ID: item.ID, State: to, StateReason: reason, OutputsDone: outputsDone})
 	if err != nil {
 		return db.WorkItem{}, fmt.Errorf("update state: %w", err)
+	}
+	// Leaving the states in which a graph runs stops it.
+	if !active(to) {
+		if _, err := q.CancelSteps(ctx, item.ID); err != nil {
+			return db.WorkItem{}, fmt.Errorf("cancel steps: %w", err)
+		}
 	}
 	if payload == nil {
 		payload = map[string]any{}

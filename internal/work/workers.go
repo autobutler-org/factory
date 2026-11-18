@@ -9,7 +9,6 @@ import (
 
 	"github.com/autobutler-org/factory/internal/db"
 	"github.com/autobutler-org/factory/internal/lease"
-	"github.com/jackc/pgx/v5"
 )
 
 // Worker kinds and states.
@@ -100,7 +99,7 @@ func (s *Service) Workers(ctx context.Context) ([]db.Worker, error) {
 func (s *Service) Policy() lease.Policy { return s.policy }
 
 // Heartbeat records that a worker is alive and extends the lease on every
-// item it still holds. It returns those items' IDs; anything the worker
+// item and step it still holds. It returns their IDs; anything the worker
 // thinks it holds but is not listed has been lost and must be abandoned.
 func (s *Service) Heartbeat(ctx context.Context, workerID string) ([]string, error) {
 	var held []string
@@ -113,40 +112,20 @@ func (s *Service) Heartbeat(ctx context.Context, workerID string) ([]string, err
 		if err != nil {
 			return fmt.Errorf("extend leases: %w", err)
 		}
+		steps, err := q.ExtendStepLeases(ctx, db.ExtendStepLeasesParams{WorkerID: &workerID, LeaseSeconds: s.policy.Lease.Seconds()})
+		if err != nil {
+			return fmt.Errorf("extend step leases: %w", err)
+		}
+		held = append(held, steps...)
 		return nil
 	})
 	return held, err
 }
 
-// ClaimNext hands the worker the highest-priority ready item it is capable
-// of that has no unfinished dependency and is not waiting out a retry delay.
-// ok is false when there is nothing to hand out.
-func (s *Service) ClaimNext(ctx context.Context, workerID string) (item db.WorkItem, ok bool, err error) {
-	err = s.inTx(ctx, func(q *db.Queries) error {
-		w, err := activeWorker(ctx, q, workerID)
-		if err != nil {
-			return err
-		}
-		var caps Capabilities
-		if err := json.Unmarshal(w.Capabilities, &caps); err != nil {
-			return fmt.Errorf("decode capabilities of worker %s: %w", workerID, err)
-		}
-		id, err := q.PickNext(ctx, caps.all())
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("pick next item: %w", err)
-		}
-		item, err = s.claim(ctx, q, id, workerID)
-		ok = err == nil
-		return err
-	})
-	return item, ok, err
-}
-
-// Claim gives one specific ready item to a worker, whatever its capabilities
-// or retry delay. Developers use it to take work to their own machine.
+// Claim gives one specific ready item, whole, to a worker, whatever its
+// capabilities or retry delay. Developers use it to take work to their own
+// machine (#12): the item's graph is handed over and its unfinished steps
+// are canceled, so cluster workers leave it alone.
 func (s *Service) Claim(ctx context.Context, id, workerID string) (db.WorkItem, error) {
 	var item db.WorkItem
 	err := s.inTx(ctx, func(q *db.Queries) error {
@@ -181,6 +160,9 @@ func (s *Service) claim(ctx context.Context, q *db.Queries, id, workerID string)
 	}
 	actor := Actor{Kind: ActorWorker, ID: workerID}
 	if _, err := transition(ctx, q, item, InProgress, "", actor, EventClaimed, map[string]any{"worker_id": workerID}); err != nil {
+		return db.WorkItem{}, err
+	}
+	if err := endGraph(ctx, q, id, GraphHandedOver); err != nil {
 		return db.WorkItem{}, err
 	}
 	item, err = q.SetClaim(ctx, db.SetClaimParams{ID: id, WorkerID: &workerID, LeaseSeconds: s.policy.Lease.Seconds()})
@@ -320,14 +302,17 @@ func (s *Service) failAttempt(ctx context.Context, q *db.Queries, item db.WorkIt
 
 // ReapReport counts what one reaper pass did.
 type ReapReport struct {
-	Expired int
-	Stuck   int
-	Gone    int
+	Expired      int
+	Stuck        int
+	StepsExpired int
+	StepsStuck   int
+	Gone         int
 }
 
 // Reap runs one pass of the background reaper: expired leases go back to
 // ready (no attempt counted), stuck claims are revoked and counted as an
-// attempt, and silent workers are marked gone. Rows are taken with SKIP
+// attempt, and silent workers are marked gone. Items (local claims) and
+// steps (cluster workers) follow the same rules. Rows are taken with SKIP
 // LOCKED and re-checked under the lock, so replicas can reap concurrently.
 func (s *Service) Reap(ctx context.Context) (ReapReport, error) {
 	var report ReapReport
@@ -373,6 +358,9 @@ func (s *Service) Reap(ctx context.Context) (ReapReport, error) {
 	if err != nil {
 		return report, err
 	}
+	if err := s.reapSteps(ctx, &report); err != nil {
+		return report, err
+	}
 	gone, err := db.New(s.pool).MarkSilentWorkersGone(ctx, s.policy.Lease.Seconds())
 	if err != nil {
 		return report, fmt.Errorf("mark silent workers gone: %w", err)
@@ -388,4 +376,54 @@ func validateOutputs(outputs []OutputInput) error {
 		}
 	}
 	return nil
+}
+
+// reapSteps returns steps with expired leases to ready and counts an attempt
+// on stuck ones. The queries lock the steps' items, so the steps are stable.
+func (s *Service) reapSteps(ctx context.Context, report *ReapReport) error {
+	system := Actor{Kind: ActorSystem, ID: "reaper"}
+	err := s.inTx(ctx, func(q *db.Queries) error {
+		ids, err := q.ExpiredSteps(ctx, reapBatch)
+		if err != nil {
+			return fmt.Errorf("find expired step leases: %w", err)
+		}
+		for _, id := range ids {
+			item, step, _, err := lockStep(ctx, q, id)
+			if err != nil {
+				return err
+			}
+			if _, err := q.ReturnStep(ctx, db.ReturnStepParams{ID: id}); err != nil {
+				return fmt.Errorf("return step: %w", err)
+			}
+			if _, err := writeEvent(ctx, q, item.ID, system, EventStepLeaseExpired, "", "", stepPayload(step, map[string]any{"worker_id": step.ClaimedBy})); err != nil {
+				return err
+			}
+		}
+		report.StepsExpired = len(ids)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return s.inTx(ctx, func(q *db.Queries) error {
+		ids, err := q.StuckSteps(ctx, db.StuckStepsParams{StuckSeconds: s.policy.StuckAfter.Seconds(), MaxRows: reapBatch})
+		if err != nil {
+			return fmt.Errorf("find stuck steps: %w", err)
+		}
+		for _, id := range ids {
+			item, step, _, err := lockStep(ctx, q, id)
+			if err != nil {
+				return err
+			}
+			reason := fmt.Sprintf("no stage report for %s", s.policy.StuckAfter)
+			if _, err := writeEvent(ctx, q, item.ID, system, EventStepStuck, "", "", stepPayload(step, map[string]any{"worker_id": step.ClaimedBy})); err != nil {
+				return err
+			}
+			if _, err := s.failStepAttempt(ctx, q, item, step, json.RawMessage("null"), reason, true, system); err != nil {
+				return err
+			}
+		}
+		report.StepsStuck = len(ids)
+		return nil
+	})
 }

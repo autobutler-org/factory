@@ -14,14 +14,15 @@ cmd/factory/        the binary: parses arguments, dispatches subcommands, maps e
 internal/           business logic, one package per concern; no package needs HTTP or CLI context
 internal/db/        pgx pool, embedded golang-migrate migrations (migrations/), sqlc output (generated)
 internal/db/dbtest/ NewDB(t): a Postgres schema per test with the real migrations applied
-internal/work/      the work item service and state machine; the only code that changes state
+internal/work/      the work item service and state machine, step graphs and step leases; the only code that changes state
 internal/lease/     lease protocol rules (policy, claimant check, retry or give up); no SQL
+internal/plan/      the pure planner: work item to step graph, and which step may run next; no SQL
 internal/api/       the HTTP API handlers and middleware (docs/api.md); no SQL, no state rules
 internal/sandbox/   starts, tracks, and destroys worker sandboxes (Kubernetes Jobs) and execs into them (#9)
 sql/queries/        the SQL sqlc compiles into internal/db
 compose.yaml        the development Postgres, on loopback
 web/                the web UI, embedded in the binary (#14)
-docs/               api.md, config.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; workers.md: lease protocol and worker HTTP contract)
+docs/               api.md, config.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols and worker HTTP contract)
 build/              build output (./build/factory); not source
 .github/workflows/  ci.yml (build, race tests, test-db on Postgres), check.yml (make check, govulncheck, attribution),
                     pr-title.yml, auto-assign-author.yml

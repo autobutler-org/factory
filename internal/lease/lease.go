@@ -3,8 +3,8 @@
 // whether a failure is retried or given up on.
 //
 // It has no SQL and no state of its own. Packages that lease rows (today
-// internal/work for work items) read the claim columns, ask these functions,
-// and write the result. Expiry and stuck detection run in SQL against the
+// internal/work, for work items and their steps) read the claim columns,
+// ask these functions, and write the result. Expiry and stuck detection run in SQL against the
 // database clock, using the durations from Policy. See
 // docs/architecture/workers.md.
 package lease

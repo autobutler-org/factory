@@ -43,15 +43,26 @@ func (h handlers) heartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"held": held, "lease_seconds": h.cfg.Work.Policy().Lease.Seconds()})
 }
 
-func (h handlers) claimNext(w http.ResponseWriter, r *http.Request) {
-	item, ok, err := h.cfg.Work.ClaimNext(r.Context(), r.PathValue("id"))
+// claimStep is POST /api/v1/workers/{id}/claim: the step protocol. The body
+// is optional; {"sandbox_key": "..."} restricts the claim to one sandbox.
+func (h handlers) claimStep(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SandboxKey string `json:"sandbox_key"`
+	}
+	if r.ContentLength != 0 {
+		if err := decode(r, &req); err != nil {
+			h.fail(w, r, err)
+			return
+		}
+	}
+	claim, ok, err := h.cfg.Work.ClaimStep(r.Context(), r.PathValue("id"), req.SandboxKey)
 	switch {
 	case err != nil:
 		h.fail(w, r, err)
 	case !ok:
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		writeJSON(w, http.StatusOK, item)
+		writeJSON(w, http.StatusOK, claim)
 	}
 }
 
