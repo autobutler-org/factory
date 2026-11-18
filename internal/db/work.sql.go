@@ -62,7 +62,7 @@ func (q *Queries) CountUnfinishedDependencies(ctx context.Context, workItemID st
 }
 
 const getItem = `-- name: GetItem :one
-SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at FROM work_items WHERE id = $1
+SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key FROM work_items WHERE id = $1
 `
 
 func (q *Queries) GetItem(ctx context.Context, id string) (WorkItem, error) {
@@ -85,12 +85,42 @@ func (q *Queries) GetItem(ctx context.Context, id string) (WorkItem, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StateChangedAt,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
+const getItemByIdempotencyKeyForUpdate = `-- name: GetItemByIdempotencyKeyForUpdate :one
+SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key FROM work_items WHERE idempotency_key = $1 FOR UPDATE
+`
+
+func (q *Queries) GetItemByIdempotencyKeyForUpdate(ctx context.Context, idempotencyKey *string) (WorkItem, error) {
+	row := q.db.QueryRow(ctx, getItemByIdempotencyKeyForUpdate, idempotencyKey)
+	var i WorkItem
+	err := row.Scan(
+		&i.ID,
+		&i.Source,
+		&i.ExternalID,
+		&i.ExternalUrl,
+		&i.Title,
+		&i.Body,
+		&i.Repos,
+		&i.State,
+		&i.Stage,
+		&i.StateReason,
+		&i.Priority,
+		&i.Attempts,
+		&i.OutputsDone,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StateChangedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
 
 const getItemBySource = `-- name: GetItemBySource :one
-SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at FROM work_items WHERE source = $1 AND external_id = $2
+SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key FROM work_items WHERE source = $1 AND external_id = $2
 `
 
 type GetItemBySourceParams struct {
@@ -118,12 +148,13 @@ func (q *Queries) GetItemBySource(ctx context.Context, arg GetItemBySourceParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StateChangedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
 
 const getItemBySourceForUpdate = `-- name: GetItemBySourceForUpdate :one
-SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at FROM work_items WHERE source = $1 AND external_id = $2 FOR UPDATE
+SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key FROM work_items WHERE source = $1 AND external_id = $2 FOR UPDATE
 `
 
 type GetItemBySourceForUpdateParams struct {
@@ -151,12 +182,13 @@ func (q *Queries) GetItemBySourceForUpdate(ctx context.Context, arg GetItemBySou
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StateChangedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
 
 const getItemForUpdate = `-- name: GetItemForUpdate :one
-SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at FROM work_items WHERE id = $1 FOR UPDATE
+SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key FROM work_items WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) GetItemForUpdate(ctx context.Context, id string) (WorkItem, error) {
@@ -179,6 +211,7 @@ func (q *Queries) GetItemForUpdate(ctx context.Context, id string) (WorkItem, er
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StateChangedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -225,23 +258,26 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) (WorkE
 }
 
 const insertItem = `-- name: InsertItem :one
-INSERT INTO work_items (source, external_id, external_url, title, body, repos, state, priority)
-VALUES ($1, $2, $3, $4, $5, $6::text[], $7, $8)
-ON CONFLICT (source, external_id) DO NOTHING
-RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at
+INSERT INTO work_items (source, external_id, external_url, title, body, repos, state, priority, idempotency_key)
+VALUES ($1, $2, $3, $4, $5, $6::text[], $7, $8,
+        $9)
+ON CONFLICT DO NOTHING
+RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key
 `
 
 type InsertItemParams struct {
-	Source      *string  `json:"source"`
-	ExternalID  *string  `json:"external_id"`
-	ExternalUrl *string  `json:"external_url"`
-	Title       string   `json:"title"`
-	Body        string   `json:"body"`
-	Repos       []string `json:"repos"`
-	State       string   `json:"state"`
-	Priority    int32    `json:"priority"`
+	Source         *string  `json:"source"`
+	ExternalID     *string  `json:"external_id"`
+	ExternalUrl    *string  `json:"external_url"`
+	Title          string   `json:"title"`
+	Body           string   `json:"body"`
+	Repos          []string `json:"repos"`
+	State          string   `json:"state"`
+	Priority       int32    `json:"priority"`
+	IdempotencyKey *string  `json:"idempotency_key"`
 }
 
+// Conflicts on (source, external_id) or idempotency_key insert nothing.
 func (q *Queries) InsertItem(ctx context.Context, arg InsertItemParams) (WorkItem, error) {
 	row := q.db.QueryRow(ctx, insertItem,
 		arg.Source,
@@ -252,6 +288,7 @@ func (q *Queries) InsertItem(ctx context.Context, arg InsertItemParams) (WorkIte
 		arg.Repos,
 		arg.State,
 		arg.Priority,
+		arg.IdempotencyKey,
 	)
 	var i WorkItem
 	err := row.Scan(
@@ -271,6 +308,7 @@ func (q *Queries) InsertItem(ctx context.Context, arg InsertItemParams) (WorkIte
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StateChangedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -285,7 +323,7 @@ func (q *Queries) ListDependencies(ctx context.Context, workItemID string) ([]st
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	items := []string{}
 	for rows.Next() {
 		var blocked_by_id string
 		if err := rows.Scan(&blocked_by_id); err != nil {
@@ -309,7 +347,7 @@ func (q *Queries) ListEvents(ctx context.Context, workItemID string) ([]WorkEven
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WorkEvent
+	items := []WorkEvent{}
 	for rows.Next() {
 		var i WorkEvent
 		if err := rows.Scan(
@@ -334,7 +372,7 @@ func (q *Queries) ListEvents(ctx context.Context, workItemID string) ([]WorkEven
 }
 
 const listItems = `-- name: ListItems :many
-SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at FROM work_items
+SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key FROM work_items
 WHERE ($1::text IS NULL OR state = $1)
   AND ($2::text IS NULL OR source = $2)
   AND ($3::text IS NULL OR $3 = ANY (repos))
@@ -372,7 +410,7 @@ func (q *Queries) ListItems(ctx context.Context, arg ListItemsParams) ([]WorkIte
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WorkItem
+	items := []WorkItem{}
 	for rows.Next() {
 		var i WorkItem
 		if err := rows.Scan(
@@ -392,6 +430,7 @@ func (q *Queries) ListItems(ctx context.Context, arg ListItemsParams) ([]WorkIte
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.StateChangedAt,
+			&i.IdempotencyKey,
 		); err != nil {
 			return nil, err
 		}
@@ -413,7 +452,7 @@ func (q *Queries) ListOutputs(ctx context.Context, workItemID string) ([]WorkOut
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WorkOutput
+	items := []WorkOutput{}
 	for rows.Next() {
 		var i WorkOutput
 		if err := rows.Scan(
@@ -445,7 +484,7 @@ SET title = coalesce($1, title),
     priority = coalesce($3, priority),
     updated_at = now()
 WHERE id = $4
-RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at
+RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key
 `
 
 type PatchItemParams struct {
@@ -480,6 +519,7 @@ func (q *Queries) PatchItem(ctx context.Context, arg PatchItemParams) (WorkItem,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StateChangedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -502,7 +542,7 @@ func (q *Queries) RemoveDependency(ctx context.Context, arg RemoveDependencyPara
 }
 
 const setOutputsDone = `-- name: SetOutputsDone :one
-UPDATE work_items SET outputs_done = true, updated_at = now() WHERE id = $1 RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at
+UPDATE work_items SET outputs_done = true, updated_at = now() WHERE id = $1 RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key
 `
 
 func (q *Queries) SetOutputsDone(ctx context.Context, id string) (WorkItem, error) {
@@ -525,6 +565,7 @@ func (q *Queries) SetOutputsDone(ctx context.Context, id string) (WorkItem, erro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StateChangedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -533,7 +574,7 @@ const updateItemContent = `-- name: UpdateItemContent :one
 UPDATE work_items
 SET title = $1, body = $2, external_url = coalesce($3, external_url), updated_at = now()
 WHERE id = $4
-RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at
+RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key
 `
 
 type UpdateItemContentParams struct {
@@ -568,6 +609,7 @@ func (q *Queries) UpdateItemContent(ctx context.Context, arg UpdateItemContentPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StateChangedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -577,7 +619,7 @@ UPDATE work_items
 SET state = $1, state_reason = $2, outputs_done = $3,
     updated_at = now(), state_changed_at = now()
 WHERE id = $4
-RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at
+RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key
 `
 
 type UpdateItemStateParams struct {
@@ -612,6 +654,7 @@ func (q *Queries) UpdateItemState(ctx context.Context, arg UpdateItemStateParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StateChangedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }

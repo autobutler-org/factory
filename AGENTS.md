@@ -15,10 +15,11 @@ internal/           business logic, one package per concern; no package needs HT
 internal/db/        pgx pool, embedded golang-migrate migrations (migrations/), sqlc output (generated)
 internal/db/dbtest/ NewDB(t): a Postgres schema per test with the real migrations applied
 internal/work/      the work item service and state machine; the only code that changes state
+internal/api/       the HTTP API handlers and middleware (docs/api.md); no SQL, no state rules
 sql/queries/        the SQL sqlc compiles into internal/db
 compose.yaml        the development Postgres, on loopback
 web/                the web UI, embedded in the binary (#14)
-docs/               architecture and operator docs (docs/architecture/work.md: states and rules)
+docs/               api.md, config.md, and architecture/ (work.md: states and rules)
 build/              build output (./build/factory); not source
 .github/workflows/  ci.yml (build, race tests, test-db on Postgres), check.yml (make check, govulncheck, attribution),
                     pr-title.yml, auto-assign-author.yml

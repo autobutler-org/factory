@@ -14,7 +14,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/autobutler-org/factory/internal/db"
@@ -62,6 +64,8 @@ const (
 	EventDependencyAdd  = "dependency_added"
 	EventDependencyDrop = "dependency_removed"
 )
+
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // Size limits on what callers may store.
 const (
@@ -150,16 +154,20 @@ func New(pool *pgxpool.Pool) *Service {
 
 // NewItem is a work item to create or upsert. Source and ExternalID are both
 // set for work that lives in a tracker, or both empty for work that exists
-// only in the factory. State is design or ready; empty means ready.
+// only in the factory; such work may carry an IdempotencyKey so a retried
+// request finds the item the first one created. State is design or ready;
+// empty means ready. BlockedBy names items by ID or as "source:external_id".
 type NewItem struct {
-	Source      string
-	ExternalID  string
-	ExternalURL string
-	Title       string
-	Body        string
-	Repos       []string
-	State       string
-	Priority    int32
+	Source         string
+	ExternalID     string
+	ExternalURL    string
+	IdempotencyKey string
+	Title          string
+	Body           string
+	Repos          []string
+	State          string
+	Priority       int32
+	BlockedBy      []string
 }
 
 // UpsertResult is the item an Upsert left behind and what it did.
@@ -189,9 +197,9 @@ func (in NewItem) validate() error {
 	return nil
 }
 
-// Upsert creates an item, or, when one with the same (source, external_id)
-// exists, refreshes its title, body and URL while it is in design or ready.
-// It never changes an existing item's state.
+// Upsert creates an item, or, when one with the same (source, external_id) or
+// idempotency key exists, refreshes its title, body and URL while it is in
+// design or ready. It never changes an existing item's state.
 func (s *Service) Upsert(ctx context.Context, in NewItem, actor Actor) (UpsertResult, error) {
 	if err := in.validate(); err != nil {
 		return UpsertResult{}, err
@@ -204,42 +212,90 @@ func (s *Service) Upsert(ctx context.Context, in NewItem, actor Actor) (UpsertRe
 	if repos == nil {
 		repos = []string{}
 	}
+	key := nilIfEmpty(in.IdempotencyKey)
+	if in.Source != "" {
+		key = nil // the external identity already dedupes
+	}
 	var res UpsertResult
 	err := s.inTx(ctx, func(q *db.Queries) error {
+		blockedBy := make([]string, 0, len(in.BlockedBy))
+		for _, ref := range in.BlockedBy {
+			id, err := resolve(ctx, q, ref)
+			if err != nil {
+				return err
+			}
+			blockedBy = append(blockedBy, id)
+		}
 		item, err := q.InsertItem(ctx, db.InsertItemParams{
 			Source: nilIfEmpty(in.Source), ExternalID: nilIfEmpty(in.ExternalID), ExternalUrl: nilIfEmpty(in.ExternalURL),
-			Title: in.Title, Body: in.Body, Repos: repos, State: state, Priority: in.Priority,
+			Title: in.Title, Body: in.Body, Repos: repos, State: state, Priority: in.Priority, IdempotencyKey: key,
 		})
-		if err == nil {
+		switch {
+		case err == nil:
 			res = UpsertResult{Item: item, Created: true, Changed: true}
-			_, err = writeEvent(ctx, q, item.ID, actor, EventCreated, "", state, map[string]any{"title": in.Title})
-			return err
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+			if _, err := writeEvent(ctx, q, item.ID, actor, EventCreated, "", state, map[string]any{"title": in.Title}); err != nil {
+				return err
+			}
+		case !errors.Is(err, pgx.ErrNoRows):
 			return fmt.Errorf("insert work item: %w", err)
+		default:
+			// ON CONFLICT DO NOTHING: the item exists.
+			if in.Source != "" {
+				item, err = q.GetItemBySourceForUpdate(ctx, db.GetItemBySourceForUpdateParams{Source: &in.Source, ExternalID: &in.ExternalID})
+			} else {
+				item, err = q.GetItemByIdempotencyKeyForUpdate(ctx, key)
+			}
+			if err != nil {
+				return fmt.Errorf("read existing work item: %w", err)
+			}
+			if res, err = refresh(ctx, q, item, in, actor); err != nil {
+				return err
+			}
 		}
-		// ON CONFLICT DO NOTHING: the item exists.
-		item, err = q.GetItemBySourceForUpdate(ctx, db.GetItemBySourceForUpdateParams{Source: &in.Source, ExternalID: &in.ExternalID})
-		if err != nil {
-			return fmt.Errorf("read existing work item: %w", err)
-		}
-		if item.State != Design && item.State != Ready {
-			res = UpsertResult{Item: item, Reason: "item is " + item.State + "; title and body are frozen once work has started"}
+		if res.Item.State != Design && res.Item.State != Ready {
 			return nil
 		}
-		if item.Title == in.Title && item.Body == in.Body && (in.ExternalURL == "" || deref(item.ExternalUrl) == in.ExternalURL) {
-			res = UpsertResult{Item: item, Reason: "nothing to change"}
-			return nil
+		for _, dep := range blockedBy {
+			if err := addDependency(ctx, q, res.Item.ID, dep, actor); err != nil {
+				return err
+			}
 		}
-		item, err = q.UpdateItemContent(ctx, db.UpdateItemContentParams{ID: item.ID, Title: in.Title, Body: in.Body, ExternalUrl: nilIfEmpty(in.ExternalURL)})
-		if err != nil {
-			return fmt.Errorf("update work item: %w", err)
-		}
-		res = UpsertResult{Item: item, Changed: true}
-		_, err = writeEvent(ctx, q, item.ID, actor, EventUpdated, "", "", map[string]any{"title": in.Title})
-		return err
+		return nil
 	})
 	return res, err
+}
+
+func refresh(ctx context.Context, q *db.Queries, item db.WorkItem, in NewItem, actor Actor) (UpsertResult, error) {
+	if item.State != Design && item.State != Ready {
+		return UpsertResult{Item: item, Reason: "item is " + item.State + "; title and body are frozen once work has started"}, nil
+	}
+	if item.Title == in.Title && item.Body == in.Body && (in.ExternalURL == "" || deref(item.ExternalUrl) == in.ExternalURL) {
+		return UpsertResult{Item: item, Reason: "nothing to change"}, nil
+	}
+	item, err := q.UpdateItemContent(ctx, db.UpdateItemContentParams{ID: item.ID, Title: in.Title, Body: in.Body, ExternalUrl: nilIfEmpty(in.ExternalURL)})
+	if err != nil {
+		return UpsertResult{}, fmt.Errorf("update work item: %w", err)
+	}
+	_, err = writeEvent(ctx, q, item.ID, actor, EventUpdated, "", "", map[string]any{"title": in.Title})
+	return UpsertResult{Item: item, Changed: true}, err
+}
+
+// resolve turns a reference to an item, its ID or "source:external_id", into
+// its ID.
+func resolve(ctx context.Context, q *db.Queries, ref string) (string, error) {
+	if uuidPattern.MatchString(ref) {
+		item, err := q.GetItem(ctx, ref)
+		return item.ID, notFound(err, "work item "+ref)
+	}
+	source, externalID, ok := strings.Cut(ref, ":")
+	if !ok {
+		return "", fmt.Errorf("work item %q: %w", ref, ErrNotFound)
+	}
+	item, err := q.GetItemBySource(ctx, db.GetItemBySourceParams{Source: &source, ExternalID: &externalID})
+	if err != nil {
+		return "", notFound(err, "work item "+ref)
+	}
+	return item.ID, nil
 }
 
 // Get returns one item.
@@ -547,22 +603,24 @@ func (s *Service) Outputs(ctx context.Context, id string) ([]db.WorkOutput, erro
 // ponytail: no cycle check; two items blocked by each other are never handed
 // out. Add a recursive check here if cycles show up in practice.
 func (s *Service) AddDependency(ctx context.Context, id, blockedBy string, actor Actor) error {
+	return s.inTx(ctx, func(q *db.Queries) error { return addDependency(ctx, q, id, blockedBy, actor) })
+}
+
+func addDependency(ctx context.Context, q *db.Queries, id, blockedBy string, actor Actor) error {
 	if id == blockedBy {
 		return fmt.Errorf("%w: an item cannot be blocked by itself", ErrInvalid)
 	}
-	return s.inTx(ctx, func(q *db.Queries) error {
-		for _, each := range []string{id, blockedBy} {
-			if _, err := q.GetItem(ctx, each); err != nil {
-				return notFound(err, "work item "+each)
-			}
+	for _, each := range []string{id, blockedBy} {
+		if _, err := q.GetItem(ctx, each); err != nil {
+			return notFound(err, "work item "+each)
 		}
-		n, err := q.AddDependency(ctx, db.AddDependencyParams{WorkItemID: id, BlockedByID: blockedBy})
-		if err != nil || n == 0 {
-			return err
-		}
-		_, err = writeEvent(ctx, q, id, actor, EventDependencyAdd, "", "", map[string]any{"blocked_by_id": blockedBy})
+	}
+	n, err := q.AddDependency(ctx, db.AddDependencyParams{WorkItemID: id, BlockedByID: blockedBy})
+	if err != nil || n == 0 {
 		return err
-	})
+	}
+	_, err = writeEvent(ctx, q, id, actor, EventDependencyAdd, "", "", map[string]any{"blocked_by_id": blockedBy})
+	return err
 }
 
 // RemoveDependency drops a dependency.
