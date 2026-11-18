@@ -20,12 +20,17 @@ internal/plan/      the pure planner: work item to step graph, and which step ma
 internal/api/       the HTTP API handlers and middleware (docs/api.md); no SQL, no state rules
 internal/codehost/  the code host (GitHub): pull requests, checks, merge, App tokens; codehost.Fake and fakegh/ for tests (#10)
 internal/sandbox/   starts, tracks, and destroys worker sandboxes (Kubernetes Jobs) and execs into them (#9)
+internal/worker/    the step executor `factory worker` runs: protocol client, heartbeat, and each step kind (#11)
+internal/harness/   drives agent CLIs (Claude Code, Grok) for a session; harness.Fake for tests
+internal/repoconfig/ parses a repository's .factory/config.toml
+internal/secretscan/ finds credential-shaped literals in the lines a branch adds
+cmd/fakeagent/      a scripted stand-in for an agent CLI, for tests
 sql/queries/        the SQL sqlc compiles into internal/db
 compose.yaml        the development Postgres, on loopback
 web/                the web UI, embedded in the binary (#14)
-docs/               api.md, config.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols and worker HTTP contract; codehost.md: the code host and its tokens)
+docs/               api.md, config.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols and worker HTTP contract; worker.md: what `factory worker` does per step kind; codehost.md: the code host and its tokens)
 build/              build output (./build/factory); not source
-.github/workflows/  ci.yml (build, race tests, test-db on Postgres), check.yml (make check, govulncheck, attribution),
+.github/workflows/  ci.yml (build, race tests, test-db and e2e on Postgres), check.yml (make check, govulncheck, attribution),
                     pr-title.yml, auto-assign-author.yml
 ```
 
@@ -42,6 +47,7 @@ comment so `make help` lists it.
 | `make build`     | builds `./build/factory` with version, commit, and date stamped in            |
 | `make test`      | `go test ./...`                                                               |
 | `make test/race` | the tests under the race detector, as CI runs them                            |
+| `make test/e2e`  | the worker's end-to-end tests (build tag `e2e`) against Postgres              |
 | `make check`     | `check/format`, `check/tidy`, `check/lint`, `check/sqlc`, `check/migrations`, then `test`; changes no files |
 | `make format`    | `golangci-lint fmt` (gci, gofumpt, goimports); rewrites files                 |
 | `make fix`       | applies lint autofixes, then formats                                          |

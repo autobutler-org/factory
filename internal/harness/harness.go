@@ -1,0 +1,101 @@
+// Package harness defines how the worker drives an agent harness, which is an
+// agent CLI such as Claude Code or the Grok CLI, and holds the implementations.
+// It was ported from schmeide's internal/harness. It knows nothing about
+// work items, steps or prompts; internal/worker writes the prompt and decides
+// what a session's result means.
+//
+// # Contract
+//
+// Every harness must:
+//
+//   - Use the login or API key already present in the environment it is
+//     given. The worker never stores agent credentials.
+//   - Report from Check, without starting a session, whether it can run. A
+//     missing CLI wraps [ErrNotInstalled] and a missing login wraps
+//     [ErrNotLoggedIn], and both messages say how to fix the problem.
+//   - Start a fresh session on every Run. No conversation state carries over
+//     from an earlier Run.
+//   - Run without a terminal and never wait for input from a person.
+//   - Stay inside Request.Dir. The harness must not create, change, or delete
+//     files outside that directory.
+//   - Return nil from Run only when the session finished successfully, and a
+//     non-nil error for every other outcome.
+//   - Return an error wrapping [ErrUsageLimit], a [UsageLimitError] where the
+//     output is at hand, when the session failed because the account hit a
+//     usage, rate, spend, or credit limit, so the worker can continue the
+//     work on another harness. ClaudeCode and Grok tell this from the tail
+//     of the output of a session that exited with an error; it is the only
+//     output they read.
+//   - Stop when the context given to Run is canceled, and return an error
+//     that wraps the context's error.
+//   - Leave no process behind. When Run returns, for any reason, every
+//     process the session started has been killed.
+//
+// Optional:
+//
+//   - Streaming. A harness may write output to Request.Output as it is
+//     produced or all at once at the end. The format of the output is up to
+//     the harness, and callers must not parse it.
+//   - Model choice, permission modes, and other settings, which belong to the
+//     implementation and not to this interface.
+//
+// The package runs on Unix only, because killing a session relies on process
+// groups.
+package harness
+
+import (
+	"context"
+	"errors"
+	"io"
+)
+
+var (
+	// ErrNotInstalled means the harness CLI was not found on this machine.
+	ErrNotInstalled = errors.New("harness not installed")
+	// ErrNotLoggedIn means the harness CLI is installed but has no login.
+	ErrNotLoggedIn = errors.New("harness not logged in")
+)
+
+// Request describes one session.
+type Request struct {
+	// Dir is the working directory the session runs in and must stay inside.
+	Dir string
+	// Prompt is the full brief for the session.
+	Prompt string
+	// Env is the session's whole environment, as "name=value" entries. Nil
+	// means the worker's own environment.
+	Env []string
+	// Output receives the session's output. Nil discards it.
+	Output io.Writer
+}
+
+// Harness is the adapter the worker uses to drive one agent CLI. See the
+// package documentation for what an implementation must guarantee.
+type Harness interface {
+	// Name identifies the harness when the worker advertises it, for example
+	// "claude-code".
+	Name() string
+	// Check returns nil when the harness is installed and logged in.
+	Check(ctx context.Context) error
+	// Run starts a fresh non-interactive session and blocks until it ends.
+	// Cancel ctx to cancel the session.
+	Run(ctx context.Context, req Request) error
+}
+
+// All returns every harness the worker knows about, usable or not. Claude Code
+// is first, so a machine where its Check passes keeps using it.
+func All() []Harness {
+	return []Harness{&ClaudeCode{}, &Grok{}}
+}
+
+// Available returns the harnesses from hs that pass Check, which is the list
+// the worker advertises when it registers.
+func Available(ctx context.Context, hs []Harness) []Harness {
+	var ok []Harness
+	for _, h := range hs {
+		if h.Check(ctx) == nil {
+			ok = append(ok, h)
+		}
+	}
+	return ok
+}

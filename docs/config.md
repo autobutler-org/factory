@@ -40,3 +40,39 @@ within 30 seconds and answered within 60, and shutdown waits up to 10 seconds fo
 | Flag | Environment | Default | Meaning |
 | --- | --- | --- | --- |
 | `--database-url` | `FACTORY_DATABASE_URL` | none, required | Postgres URL. |
+
+## `factory worker`
+
+Runs inside a worker sandbox; see [architecture/worker.md](architecture/worker.md). The Job sets `FACTORY_URL`,
+`FACTORY_SANDBOX` and `FACTORY_TOKEN_FILE`.
+
+| Flag | Environment | Default | Meaning |
+| --- | --- | --- | --- |
+| `--url` | `FACTORY_URL` | none, required | The factory server, for example `http://factory:8080`. |
+| `--token-file` | `FACTORY_TOKEN_FILE` | unset | File holding the bearer token, read on every request. |
+| none | `FACTORY_API_TOKEN` | unset | Bearer token when `--token-file` is not set. |
+| `--sandbox` | `FACTORY_SANDBOX` | the host name | The worker's name: the sandbox it runs in. The same name registers as the same worker. |
+| `--sandbox-key` | `FACTORY_SANDBOX_KEY` | unset | Claim only this chain's steps (`<item id>/<owner>/<repo>`). |
+| `--work-dir` | `FACTORY_WORK_DIR` | `$TMPDIR/factory-worker` | Where checkouts live, one per sandbox key. |
+| `--harnesses` | `FACTORY_HARNESSES` | `claude-code,grok` | Agent CLIs to use, in order. Those not installed or not logged in are skipped; none left is an error. |
+| `--git-url` | `FACTORY_GIT_URL` | `https://github.com` | Base of clone URLs: `<git-url>/<owner>/<repo>.git`. |
+| `--github-api-url` | `FACTORY_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL. |
+
+The model API key (`ANTHROPIC_API_KEY`, `XAI_API_KEY`) is passed to agent sessions only. Fixed limits: one git command
+10 minutes, a session silent for 15 minutes is killed, one API call 30 seconds, the release on shutdown 10 seconds.
+
+### `.factory/config.toml`
+
+Each repository the worker changes keeps its settings on its default branch:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `gate` | none, required | Shell command a change must pass, run in the checkout. |
+| `gate_timeout` | `30m` | How long the gate may run. |
+| `session_timeout` | `2h` | How long one agent session may run. |
+| `review_rounds` | `3` | Review rounds to plan; `0` skips review. Parsed, not yet read by the planner. |
+| `require_approval` | `false` | Wait for a human approval before merge. Parsed, not yet read by the planner. |
+| `after` | `[]` | Repositories of the same item whose chains finish first. Parsed, not yet read by the planner. |
+| `[automate] merge` | `"on"` | `"off"` leaves the pull request for a person. Parsed, not yet read by the planner. |
+
+Unknown keys are an error, and a missing file or `gate` fails the item's `workspace` step for good.

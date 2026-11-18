@@ -1,0 +1,114 @@
+package harness
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os/exec"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// ClaudeCode drives the locally installed claude CLI. Run passes
+// --output-format stream-json --verbose, so Request.Output gets one JSON
+// event per line as the session works rather than only the final result.
+type ClaudeCode struct {
+	// Bin is the claude executable. Empty means "claude" on PATH.
+	Bin string
+	// Args are the session flags. Nil means "--permission-mode acceptEdits",
+	// which lets the session edit files in its working directory and nothing
+	// more. A worker that wants the session to run commands sets its own.
+	Args []string
+}
+
+// Name implements [Harness].
+func (*ClaudeCode) Name() string { return "claude-code" }
+
+// lookPath finds the claude executable.
+func (c *ClaudeCode) lookPath() (string, error) {
+	name := c.Bin
+	if name == "" {
+		name = "claude"
+	}
+	bin, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("%w: %q was not found; install Claude Code (https://claude.com/claude-code) and make sure it is on PATH", ErrNotInstalled, name)
+	}
+	return bin, nil
+}
+
+// Check implements [Harness].
+func (c *ClaudeCode) Check(ctx context.Context) error {
+	bin, err := c.lookPath()
+	if err != nil {
+		return err
+	}
+	// A logged-out CLI exits non-zero but still prints the JSON, so the exit
+	// status is ignored in favor of the output.
+	out, runErr := exec.CommandContext(ctx, bin, "auth", "status", "--json").Output()
+	var status struct {
+		LoggedIn bool `json:"loggedIn"`
+	}
+	if err := json.Unmarshal(out, &status); err != nil {
+		return fmt.Errorf("could not read the output of `%s auth status --json` (%w); run it by hand to see what is wrong, and upgrade Claude Code if the command is unknown", bin, errors.Join(runErr, err))
+	}
+	if !status.LoggedIn {
+		return fmt.Errorf("%w: run `%s auth login` on this machine, then try again", ErrNotLoggedIn, bin)
+	}
+	return nil
+}
+
+// Run implements [Harness].
+func (c *ClaudeCode) Run(ctx context.Context, req Request) error {
+	bin, err := c.lookPath()
+	if err != nil {
+		return err
+	}
+	args := c.Args
+	if args == nil {
+		args = []string{"--permission-mode", "acceptEdits"}
+	}
+	// The prompt goes in on stdin so it is never parsed as a flag. stream-json
+	// (which needs --verbose with --print) writes each event as a JSON line as
+	// it happens, so the output shows where a session stopped; plain --print
+	// writes only the final result.
+	cmd := exec.CommandContext(ctx, bin, append([]string{"--print", "--output-format", "stream-json", "--verbose"}, args...)...)
+	cmd.Dir = req.Dir
+	cmd.Env = req.Env
+	cmd.Stdin = strings.NewReader(req.Prompt)
+	// The tail is kept to tell a usage limit from any other failure.
+	tail := &tailWriter{}
+	output := io.Writer(tail)
+	if req.Output != nil {
+		output = io.MultiWriter(req.Output, tail)
+	}
+	cmd.Stdout = output
+	cmd.Stderr = output
+	// The session leads its own process session, detached from the worker's
+	// terminal, so SIGTTOU and SIGTTIN cannot stop it when the worker runs in
+	// a terminal. As session leader it also leads its own process group, so
+	// everything it spawns can be killed together.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	killGroup := func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.Cancel = killGroup
+	// Stops Wait from hanging when a leftover child holds the output open.
+	cmd.WaitDelay = 5 * time.Second
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start claude: %w", err)
+	}
+	err = cmd.Wait()
+	_ = killGroup() // sweep up anything the session left running
+	switch {
+	case ctx.Err() != nil:
+		return fmt.Errorf("claude session canceled: %w", ctx.Err())
+	case errors.Is(err, exec.ErrWaitDelay):
+		return nil // claude itself exited 0; only a leftover child lingered
+	case err != nil:
+		return failure(c.Name(), "claude", err, tail)
+	}
+	return nil
+}

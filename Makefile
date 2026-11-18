@@ -97,6 +97,12 @@ test: ## Run the tests
 test/db: ## Run every test, the database tests included, against Postgres (start it with make serve/postgres)
 	FACTORY_DATABASE_URL='$(TEST_DATABASE_URL)' $(GO) test -race -count=1 ./...
 
+# The end-to-end tests run the worker against a real API, Postgres, fakegh, a
+# local git origin, and the fake agent. They are behind the e2e build tag.
+.PHONY: test/e2e
+test/e2e: ## Run the worker's end-to-end tests against Postgres (start it with make serve/postgres)
+	FACTORY_DATABASE_URL='$(TEST_DATABASE_URL)' $(GO) test -tags e2e -race -count=1 -run '^TestE2E' ./internal/worker
+
 .PHONY: test/race
 test/race: ## Run the tests with the race detector
 	$(GO) test -race ./...

@@ -107,13 +107,13 @@ step again, and it must find and reuse what an earlier run left.
 | `await_approval` | Wait for a human approval; completed by an event | no | | `{}` | it holds nothing |
 | `merge` | Merge the pull request or add it to the merge queue, recording the output as merged when it is | no | | `{"merged", "queued"}` | merging a merged pull request is a no-op |
 
-The result shapes are the contract the worker (#11) implements. The server reads only `verdict`; the rest is kept
+The result shapes are the contract the worker implements ([worker.md](worker.md)). The server reads only `verdict`; the rest is kept
 for the worker's next steps and for people reading the graph.
 
 ### Changing the process per repository
 
-`plan.RepoConfig` holds what a repository can change. #11 reads it from `.factory/config.toml`; until then every
-repository gets the default.
+`plan.RepoConfig` holds what a repository can change. `internal/repoconfig` parses it from `.factory/config.toml`
+(`Config.Plan()`), but the server does not read that file yet, so every repository gets the default.
 
 | Field | Default | Effect |
 | --- | --- | --- |
@@ -178,6 +178,7 @@ their next heartbeat. Steps of the new graph run from the start, which is safe b
 
 - The `decompose` kind, an agent step that proposes how to split a large item into a replan.
 - The UI's graph view (#14) and one telemetry span per step (#13).
-- Reading `RepoConfig` from `.factory/config.toml` (#11), and starting sandboxes per chain from `internal/sandbox`.
+- Feeding `.factory/config.toml` (parsed by `internal/repoconfig`) to the planner, and starting sandboxes per chain
+  from `internal/sandbox`.
 - A wait step only accepts its event while it is `ready`. An adapter that sees checks finish before the chain reaches
   `await_checks` must check the current status when the step becomes ready (#7).
