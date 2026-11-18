@@ -5,9 +5,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 // Stamped at build time by the Makefile with -ldflags "-X main.version=...".
@@ -26,6 +29,7 @@ Usage:
   factory [-h | --help]
 
 Commands:
+  migrate     Apply, roll back, or report the database migrations.
   version     Print the version stamped into this binary.
 
 Run 'factory <command> --help' for a command's usage.
@@ -37,7 +41,7 @@ Print the version, commit, and build date stamped into this binary.
 An unstamped build reports dev.
 `
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -46,6 +50,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
+	case "migrate":
+		return migrateMain(ctx, args[1:], stdout, stderr)
 	case "version":
 		return versionMain(args[1:], stdout, stderr)
 	}
@@ -67,5 +73,8 @@ func versionMain(args []string, stdout, stderr io.Writer) int {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
 }

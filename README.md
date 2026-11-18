@@ -11,7 +11,8 @@ It is early. The plan and its issues are in the epic, [#1](https://github.com/au
 ```sh
 make setup   # download modules and build the dev tools pinned in go.mod
 make help    # list every target
-make check   # format, tidy, lint, and test checks
+make check   # format, tidy, lint, sqlc, migration, and test checks
+make serve/postgres && make test/db   # run the database tests against a local Postgres (needs Docker)
 ```
 
 See [AGENTS.md](AGENTS.md) for the layout and conventions, and [CONTRIBUTING.md](CONTRIBUTING.md) for how to

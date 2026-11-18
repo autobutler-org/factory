@@ -1,0 +1,26 @@
+# Local development only: the Postgres that `make serve/postgres` starts and
+# `make test/db` uses. The credentials are throwaway and the port is bound to
+# loopback. CI runs the same image, user, password and database as a service
+# container (.github/workflows/ci.yml); keep the two in step.
+name: factory
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:18}
+    environment:
+      POSTGRES_USER: factory
+      POSTGRES_PASSWORD: factory
+      POSTGRES_DB: factory
+      PGDATA: /var/lib/postgresql/pgdata
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factory -d factory"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  postgres:
