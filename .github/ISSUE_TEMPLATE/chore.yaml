@@ -1,0 +1,24 @@
+name: Chore
+description: Maintenance work with no change in behavior, such as a dependency bump or cleanup.
+labels:
+  - chore
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should be tidied, updated, or removed.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why now
+      description: What this unblocks or what it costs to leave as is.
+  - type: textarea
+    id: done
+    attributes:
+      label: How to tell it is done
+      description: The checks to run before the pull request is ready, and confirmation that behavior is unchanged.
+    validations:
+      required: true

@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose work that takes one issue to one pull request.
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should change, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: in-scope
+    attributes:
+      label: In scope
+      description: The behavior this issue includes. List only what one pull request should deliver.
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What this issue does not include, so later work is not pulled in.
+  - type: textarea
+    id: done
+    attributes:
+      label: How to tell it is done
+      description: The behavior that must be true, or the checks to run, before the pull request is ready.
+    validations:
+      required: true

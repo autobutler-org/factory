@@ -1,0 +1,101 @@
+# `AGENTS.md`
+
+These instructions tell coding agents and contributors how to work in this repository. [`CLAUDE.md`](CLAUDE.md)
+imports this file, so this is the one place to edit.
+
+factory is the autobutler-org software factory. It takes work from any tracker, records it and its state in
+Postgres, hands it to agent workers in our Kubernetes cluster, and shows what is happening. It is one Go binary,
+`factory`, with subcommands. The plan is in the epic, [#1](https://github.com/autobutler-org/factory/issues/1).
+
+## Layout
+
+```text
+cmd/factory/        the binary: parses arguments, dispatches subcommands, maps errors to exit codes
+internal/           business logic, one package per concern; no package needs HTTP or CLI context
+web/                the web UI, embedded in the binary (#14)
+docs/               architecture and operator docs
+build/              build output (./build/factory); not source
+.github/workflows/  ci.yml (build, race tests), check.yml (make check, govulncheck, attribution),
+                    pr-title.yml, auto-assign-author.yml
+```
+
+`internal/`, `web/`, and `docs/` do not exist yet. The issue that first needs each one creates it.
+
+## Use Makefile targets (always)
+
+Use the Makefile targets, not ad-hoc commands. If an action needs to be repeatable, add a target with a `## `
+comment so `make help` lists it.
+
+| Target           | What it does                                                                  |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `make setup`     | downloads modules and builds the dev tools pinned in `go.mod`                 |
+| `make build`     | builds `./build/factory` with version, commit, and date stamped in            |
+| `make test`      | `go test ./...`                                                               |
+| `make test/race` | the tests under the race detector, as CI runs them                            |
+| `make check`     | `check/format`, `check/tidy`, `check/lint`, then `test`; changes no files     |
+| `make format`    | `golangci-lint fmt` (gci, gofumpt, goimports); rewrites files                 |
+| `make fix`       | applies lint autofixes, then formats                                          |
+| `make tidy`      | `go mod tidy`                                                                 |
+
+- The Go version is pinned once, on the `go` line of `go.mod`. The Makefile reads it into `GOTOOLCHAIN`.
+- Dev tools (golangci-lint, gofumpt, gci, goimports, govulncheck, air) are `tool` directives in `go.mod` and
+  run as `go tool <name>`. Do not install them globally or pin them anywhere else.
+- `.golangci.yml` enables only linters that have an autofix. Run `make format`, `make tidy`, and `make check`
+  before pushing, and commit whatever the first two changed.
+
+## Go conventions
+
+- Respect `.golangci.yml` and the formatters it enables. Avoid `//nolint`; where one is unavoidable, name the
+  linter and give a reason.
+- Handlers and `main` only parse input, call a service function, and shape the output. Business logic lives in
+  `internal/` packages that need no HTTP or CLI context and are tested without it.
+- Each command's dispatch takes its arguments and output writers, parses flags with the standard `flag` package
+  (no cobra, no viper), and returns an exit code: `0` success, `2` usage error, `1` runtime failure. Error text
+  says what to do next, for example `Run 'factory --help' for usage.`
+- Every package has a package doc comment that says what it does and what it does not do. When a package's
+  behavior changes, its doc changes in the same pull request.
+- Wrap errors with context: `fmt.Errorf("...: %w", err)`. Sentinel errors are `var Err... = errors.New(...)`
+  and are matched with `errors.Is`.
+- No new mutable package-level state. Prefer immutable values: `const` where possible, and values passed down
+  rather than shared. The version variables in `cmd/factory` are `var` only because `-ldflags -X` needs it.
+- Every subprocess has a timeout and is canceled through its context.
+- Logs use `log/slog` with key-value pairs.
+
+## Tests
+
+Test-driven development is the default:
+
+1. Write or update the test that pins the behavior.
+2. Run it and watch it fail.
+3. Write the least code that makes it pass.
+4. Refactor with the tests still passing.
+
+Tests sit beside the code they cover and use the standard `testing` package only. Use table-driven tests with
+`t.Run` where a function has several input cases. Cover edge cases, error paths, and boundary values. A pure
+refactor runs the existing tests before and after.
+
+## Documentation
+
+Architecture docs are updated in the same pull request as the code they describe, not in a follow-up. That
+includes this file's layout section, `README.md`, and anything under `docs/`.
+
+Write plainly, in American spelling.
+
+## Pull requests and commits
+
+- **Title:** a conventional commit in lowercase imperative mood, with the issue number as the scope:
+  `feat(12): add claim lease`, not `12: Added claim lease`. The type is one of `feat`, `fix`, `docs`, `style`,
+  `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`. `pr-title.yml` fails any other title. The
+  title becomes the commit subject on squash merge.
+- **Body:** fill in the [PR template](.github/pull_request_template.md) and include `Closes #N`.
+- **Branch:** `<issue number>_short-description`, for example `12_claim-lease`.
+- **Commits:** signed off (`git commit -s`).
+- **No AI attribution.** No AI co-author trailer, no generated-by footer, and no agent session link in a commit,
+  pull request, comment, or issue. `check.yml` rejects a pull request that carries one.
+- **How was this tested?** lists the commands actually run.
+
+## Scope
+
+- Build what the issue asks for. No flags, config keys, packages, or abstractions nobody requested.
+- Advice is not a request for edits. When asked to review, explain, or plan, answer and touch no files.
+- Never start, stop, or restart a server or worker yourself, and do not run `make watch`. Tests are fine to run.

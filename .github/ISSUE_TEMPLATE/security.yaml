@@ -1,0 +1,29 @@
+name: Security hardening
+description: Suggest a hardening or defense-in-depth change. Report an exploitable vulnerability privately instead (see SECURITY.md).
+labels:
+  - security
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not use this form for an exploitable vulnerability. File a private advisory at https://github.com/autobutler-org/factory/security/advisories/new instead.
+        Never paste a token, key, or password here.
+  - type: textarea
+    id: weakness
+    attributes:
+      label: What is the weakness?
+      description: What could go wrong and where. Name the component involved.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What an attacker or a mistake could do, and who is affected.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested change
+      description: How you would close the gap, if you have an idea.

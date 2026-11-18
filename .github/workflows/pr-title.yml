@@ -1,0 +1,32 @@
+name: pr-title
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+    branches:
+      - main
+  # A required check must report in the merge queue too. There is no title to
+  # check there, so the job is skipped, which counts as passing.
+  merge_group:
+
+permissions: {}
+
+jobs:
+  pr-title:
+    name: Check the title is a conventional commit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+'
+          if ! grep -qE "${pattern}" <<<"${TITLE}"; then
+            echo "The title is not a conventional commit: ${TITLE}"
+            echo "Use type(scope): subject, with the issue number as the scope. Example: feat(12): add claim lease"
+            echo "type is one of feat, fix, docs, style, refactor, perf, test, build, ci, chore or revert."
+            exit 1
+          fi
+          echo "Title is a conventional commit: ${TITLE}"
