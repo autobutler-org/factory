@@ -32,6 +32,7 @@ Commands:
   migrate     Apply, roll back, or report the database migrations.
   serve       Serve the HTTP API.
   version     Print the version stamped into this binary.
+  worker      Run the step executor in a worker sandbox.
 
 Run 'factory <command> --help' for a command's usage.
 `
@@ -57,6 +58,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return serveMain(ctx, args[1:], stdout, stderr)
 	case "version":
 		return versionMain(args[1:], stdout, stderr)
+	case "worker":
+		return workerMain(ctx, args[1:], stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "factory: unknown command %q\nRun 'factory --help' for usage.\n", args[0])
 	return 2

@@ -109,5 +109,5 @@ so it never enters the sandbox. That swap is not built.
 
 - Landing a commit directly, without a pull request, for repositories whose config allows it.
 - The GitHub webhook adapter that matches code host events to outputs (#7).
-- The worker steps that call the code host: open, review, merge when green (#11, #24).
+- Merge when green beyond one `merge` step; the worker's `open_pr` and `merge` steps are in [worker.md](worker.md).
 - Code hosts other than GitHub, and GitHub Enterprise issue links in `PullBody`.

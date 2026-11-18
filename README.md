@@ -13,9 +13,11 @@ make setup   # download modules and build the dev tools pinned in go.mod
 make help    # list every target
 make check   # format, tidy, lint, sqlc, migration, and test checks
 make serve/postgres && make test/db   # run the database tests against a local Postgres (needs Docker)
+make test/e2e   # the worker's end-to-end tests, against the same Postgres
 ```
 
-Run the server against a migrated database with `factory migrate up` then `factory serve`; [docs/config.md](docs/config.md)
+Run the server against a migrated database with `factory migrate up` then `factory serve`, and a worker with
+`factory worker --url ...`; [docs/config.md](docs/config.md)
 lists the settings and [docs/api.md](docs/api.md) the routes.
 
 See [AGENTS.md](AGENTS.md) for the layout and conventions, and [CONTRIBUTING.md](CONTRIBUTING.md) for how to
