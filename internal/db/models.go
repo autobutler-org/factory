@@ -27,6 +27,16 @@ type WorkEvent struct {
 	Payload    json.RawMessage `json:"payload"`
 }
 
+type WorkGraph struct {
+	ID         string    `json:"id"`
+	WorkItemID string    `json:"work_item_id"`
+	Version    int32     `json:"version"`
+	Template   string    `json:"template"`
+	InputsHash string    `json:"inputs_hash"`
+	State      string    `json:"state"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type WorkItem struct {
 	ID              string     `json:"id"`
 	Source          *string    `json:"source"`
@@ -64,6 +74,32 @@ type WorkOutput struct {
 	Status     string    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type WorkStep struct {
+	ID              string          `json:"id"`
+	GraphID         string          `json:"graph_id"`
+	Position        int32           `json:"position"`
+	Key             string          `json:"key"`
+	Kind            string          `json:"kind"`
+	Params          json.RawMessage `json:"params"`
+	SandboxKey      string          `json:"sandbox_key"`
+	Condition       string          `json:"condition"`
+	State           string          `json:"state"`
+	Attempts        int32           `json:"attempts"`
+	ClaimedBy       *string         `json:"claimed_by"`
+	LeaseExpiresAt  *time.Time      `json:"lease_expires_at"`
+	Stage           string          `json:"stage"`
+	StageReportedAt *time.Time      `json:"stage_reported_at"`
+	AvailableAt     time.Time       `json:"available_at"`
+	Result          json.RawMessage `json:"result"`
+	StartedAt       *time.Time      `json:"started_at"`
+	FinishedAt      *time.Time      `json:"finished_at"`
+}
+
+type WorkStepEdge struct {
+	StepID      string `json:"step_id"`
+	DependsOnID string `json:"depends_on_id"`
 }
 
 type Worker struct {

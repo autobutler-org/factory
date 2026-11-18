@@ -81,7 +81,13 @@ func New(cfg Config) http.Handler {
 	v1.HandleFunc("POST /api/v1/workers", h.registerWorker)
 	v1.HandleFunc("GET /api/v1/workers", h.listWorkers)
 	v1.HandleFunc("POST /api/v1/workers/{id}/heartbeat", h.heartbeat)
-	v1.HandleFunc("POST /api/v1/workers/{id}/claim", h.claimNext)
+	v1.HandleFunc("POST /api/v1/workers/{id}/claim", h.claimStep)
+	v1.HandleFunc("GET /api/v1/work/{id}/graph", h.graph)
+	v1.HandleFunc("POST /api/v1/work/{id}/replan", h.replan)
+	v1.HandleFunc("POST /api/v1/steps/{id}/stage", h.stepStage)
+	v1.HandleFunc("POST /api/v1/steps/{id}/result", h.stepResult)
+	v1.HandleFunc("POST /api/v1/steps/{id}/release", h.stepRelease)
+	v1.HandleFunc("POST /api/v1/steps/{id}/complete", h.completeWait)
 	v1.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "not_found", "no route for "+r.Method+" "+r.URL.Path, nil)
 	})
@@ -213,6 +219,10 @@ func (h handlers) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusConflict, "lease_expired", err.Error(), nil)
 	case errors.Is(err, work.ErrWorkerNotActive):
 		writeError(w, r, http.StatusConflict, "worker_not_active", err.Error(), nil)
+	case errors.Is(err, work.ErrNotWaiting):
+		writeError(w, r, http.StatusConflict, "not_waiting", err.Error(), nil)
+	case errors.Is(err, work.ErrNotReplannable):
+		writeError(w, r, http.StatusConflict, "not_replannable", err.Error(), nil)
 	case errors.Is(err, work.ErrOutputConflict):
 		writeError(w, r, http.StatusConflict, "output_conflict", err.Error(), nil)
 	default:

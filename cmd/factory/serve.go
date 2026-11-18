@@ -31,9 +31,11 @@ Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_ADDR):
   --stuck-after DURATION
                        revoke a claim with no stage report for this long and
                        count an attempt (default 3h)
-  --max-attempts N     failed attempts before an item is failed (default 3)
+  --max-attempts N     failed attempts before a step or item is failed
+                       (default 3)
   --retry-delay DURATION
-                       wait before handing out a retried item (default 1m)
+                       wait before handing out a retried step or item
+                       (default 1m)
 
 Environment:
   FACTORY_API_TOKEN    bearer token required on /api/v1. When unset the API is
@@ -152,7 +154,8 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	return 0
 }
 
-// reap runs the lease reaper every interval until ctx ends. Several replicas
+// reap runs the lease reaper, for item and step leases, every interval until
+// ctx ends. Several replicas
 // may run it at once; Reap takes rows with SKIP LOCKED.
 func reap(ctx context.Context, svc *work.Service, interval time.Duration, logger *slog.Logger) {
 	ticker := time.NewTicker(interval)
@@ -168,7 +171,8 @@ func reap(ctx context.Context, svc *work.Service, interval time.Duration, logger
 		case err != nil && ctx.Err() == nil:
 			logger.Error("reaper pass failed", "err", err)
 		case report != work.ReapReport{}:
-			logger.Info("reaper pass", "expired", report.Expired, "stuck", report.Stuck, "gone", report.Gone)
+			logger.Info("reaper pass", "expired", report.Expired, "stuck", report.Stuck,
+				"steps_expired", report.StepsExpired, "steps_stuck", report.StepsStuck, "gone", report.Gone)
 		}
 	}
 }

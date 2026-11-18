@@ -12,6 +12,7 @@ A work item is one unit of work the factory tracks: an issue from a tracker, or 
 | `work_events` | Append-only history: who (`actor_kind`, `actor_id`) did what (`type`) and when (`at`), with `from_state`, `to_state` and a JSON `payload`. A trigger rejects every `UPDATE` and `DELETE`. |
 | `work_dependencies` | `work_item_id` is blocked by `blocked_by_id`. |
 | `work_outputs` | The pull requests and commits an item produced, one row each, possibly across several repositories. |
+| `work_graphs`, `work_steps`, `work_step_edges` | The plan of the work as a graph of steps; see [graph.md](graph.md). |
 
 `state` is checked by the database as well as by Go. `(source, external_id)` is unique; both are null for work
 that exists only in the factory. A pull request output is unique on `(repo, kind, url)` and a commit on
@@ -99,3 +100,10 @@ A `closed` pull request (abandoned or superseded) does not hold the item back on
 
 Moving back to `design`, `ready` or `in_progress` (a reopen, a retry, changes requested) clears `outputs_done`,
 because the work may produce more.
+
+## The step graph
+
+While an item is `in_progress` or `in_review`, its current step graph drives it, and the graph's progress moves the
+item through the rules above: see [graph.md](graph.md#the-items-state). Every move to any other state cancels the
+unfinished steps of the item's graph, so a graph only runs while its item is being worked. Taking the item from
+`ready` again plans a new graph version.

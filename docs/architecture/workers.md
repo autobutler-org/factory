@@ -1,13 +1,143 @@
 # Workers and claim leases
 
-A worker is a process that does work items: an agent sandbox in our cluster (`kind: cluster`) or a developer's
-machine (`kind: local`, #12). Workers talk to `factory serve` over HTTP. There is no queue: a claim is a lease on a
-`work_items` row, taken with `SELECT ... FOR UPDATE SKIP LOCKED`, so concurrent claimers never get the same item.
+A worker is a process that does work: an agent sandbox in our cluster (`kind: cluster`) or a developer's machine
+(`kind: local`, #12). Workers talk to `factory serve` over HTTP. There is no queue: a claim is a lease on a row,
+taken under a row lock with `SKIP LOCKED`, so concurrent claimers never get the same thing.
+
+There are two levels of claim, with the same lease rules:
+
+- **Steps**, for cluster workers. Each work item is planned as a graph of steps ([graph.md](graph.md)); a cluster
+  worker claims one step, runs the code for its kind, and reports the result. This is
+  [the step protocol](#the-step-protocol).
+- **Whole items**, for developers (#12). A local claim takes a `ready` item whole: its graph is marked
+  `handed_over` and its unfinished steps are canceled. This is [the item protocol](#the-item-protocol-local-claims).
 
 The rules that do not depend on what is leased (the timing policy, who may act on a claim, and whether a failure is
-retried) live in `internal/lease`. `internal/work` applies them to work items and holds the SQL.
+retried) live in `internal/lease`. `internal/work` applies them to steps and items and holds the SQL.
 
-## The lease protocol
+## The step protocol
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Worker
+    participant F as factory serve
+    participant A as Adapter (#7)
+    W->>F: POST /api/v1/workers {name, kind: cluster, capabilities}
+    F-->>W: 200 {id, ...}
+    W->>F: POST /api/v1/workers/{id}/claim {sandbox_key?}
+    F-->>W: 200 {step, item, results, outputs} or 204
+    par every lease/3
+        W->>F: POST /api/v1/workers/{id}/heartbeat
+        F-->>W: 200 {held: [step ids], lease_seconds}
+    and as the step progresses
+        W->>F: POST /api/v1/steps/{step}/stage {worker_id, stage, outputs}
+    end
+    W->>F: POST /api/v1/steps/{step}/result {worker_id, outcome, result, outputs}
+    F-->>W: 200 step; the next steps of the graph become ready in the same transaction
+    Note over F: the chain reaches await_checks: no worker is handed it
+    A->>F: POST /api/v1/steps/{wait step}/complete {outcome, result}
+    F-->>A: 200 step; the chain continues
+```
+
+1. **Register** once at startup, as for items.
+2. **Claim** a step. The server hands out the ready step of the highest-priority item the worker is capable of
+   (every entry of the item's `requires` among the worker's `harnesses` and `labels`), never a wait step, never a
+   step whose sandbox already has a step running, never a step waiting out a retry delay. When no planned step is
+   ready, the claim takes the next `ready` item, plans it and moves it to `in_progress`. A sandbox started for one
+   chain sends `{"sandbox_key": "<its key>"}` and is handed only that chain's steps, and never plans a new item.
+3. **Heartbeat** at least every `lease_seconds / 3`. `held` lists every step (and item) the worker still holds.
+   **A step missing from `held` has been lost (its lease expired, or the item was replanned, blocked or taken
+   locally): stop working on it and do not report on it.**
+4. **Report stage** whenever progress changes; it resets the step's stuck timer and can record outputs.
+5. **Report the result** once, or **release** the step to give it back untouched (on SIGTERM, for example).
+
+Run the kind named by `step.kind` with `step.params`; [graph.md](graph.md#step-kinds) lists every kind, its params
+and the result it reports. Two rules for every kind:
+
+- **Resume from the claim, not from local state.** A step may land in a fresh sandbox, for example the first `fix`
+  after a wait. `results` holds the result of every step of the graph that has succeeded, by key (the `workspace`
+  result names the branch), and `outputs` holds the item's pull requests and commits. A sandbox step that finds no
+  working tree re-creates it from the pushed branch.
+- **Be safe to run twice.** A retry, an expired lease or a replan runs a step again. `open_pr` finds the pull
+  request it already opened in `outputs`; `workspace` reuses the clone.
+
+Only the current claimant may report on or release a step: anyone else gets `409 not_claimant`, and a claimant whose
+lease ran out gets `409 lease_expired`. The call changes nothing.
+
+Every request follows the [HTTP contract](#http-contract) below: bearer token, JSON bodies, unknown fields refused
+with `400 malformed_request`, and errors in [one shape](#errors). Registration and heartbeats are shared with the
+item protocol.
+
+### Claim a step: `POST /api/v1/workers/{id}/claim`
+
+The body is optional: `{"sandbox_key": "b2e9.../autobutler-org/quark"}` restricts the claim to that sandbox.
+`204` with no body when there is nothing to hand out; `409 worker_not_active` for a worker that is draining or gone.
+`200`:
+
+```json
+{
+  "step": {"id": "5d1a...", "graph_id": "c3f0...", "position": 1, "key": "autobutler-org/quark/implement",
+           "kind": "implement", "params": {"repo": "autobutler-org/quark"},
+           "sandbox_key": "b2e9.../autobutler-org/quark", "condition": "", "state": "running", "attempts": 0,
+           "claimed_by": "6f1c...", "lease_expires_at": "...", "stage": "", "stage_reported_at": "...",
+           "available_at": "...", "result": null, "started_at": "...", "finished_at": null},
+  "item": {"id": "b2e9...", "title": "...", "body": "...", "repos": ["autobutler-org/quark"], "state": "in_progress", "...": "..."},
+  "results": {"autobutler-org/quark/workspace": {"branch": "factory/b2e9...", "base": "main", "head": "9fceb02"}},
+  "outputs": []
+}
+```
+
+`item` is the work item as every route returns it (below); `outputs` are output rows as
+`POST /api/v1/work/{id}/outputs` returns them.
+
+### Report a step's stage: `POST /api/v1/steps/{id}/stage`
+
+`{"worker_id": "6f1c...", "stage": "session_running", "outputs": [...]}`. `outputs` is optional. `200` with the step.
+
+### Report a step's result: `POST /api/v1/steps/{id}/result`
+
+```json
+{"worker_id": "6f1c...", "outcome": "succeeded", "result": {"verdict": "changes", "findings": "..."},
+ "reason": "", "retryable": false, "outputs": []}
+```
+
+| `outcome` | Meaning | What happens |
+| --- | --- | --- |
+| `succeeded` | The step did its job. `result` is the kind's result document. | The step is `succeeded`; the steps after it become `ready` or `skipped`, and the item's state is derived again. A `review` or `await_checks` on its last round with a verdict other than `pass` fails the item instead. |
+| `failed` | The attempt failed; `retryable: true` for a transient failure. | Counted. Retryable: the step is `ready` again after `--retry-delay` until `--max-attempts`. Otherwise, or at the limit: the step and the item are `failed`. |
+| `blocked` | The step needs a decision; say what in `reason`. | The step is `failed` and the item `blocked` with `reason`. |
+
+`outputs` are recorded first. `200` with the step. The claim has ended.
+
+### Release a step: `POST /api/v1/steps/{id}/release`
+
+`{"worker_id": "6f1c...", "reason": "shutting down"}`. The step is `ready` again, not counted. `200` with the step.
+
+### Complete a wait step: `POST /api/v1/steps/{id}/complete`
+
+For adapters (#7) and operators, not workers: the event an `await_checks` or `await_approval` step waits for.
+
+```json
+{"outcome": "succeeded", "result": {"verdict": "pass"}, "reason": "", "retryable": false, "outputs": []}
+```
+
+The outcomes are the same as for a result. `409 not_waiting` when the step is not a wait step, is not `ready`, or
+belongs to a graph or item that is no longer running. Find the step ID with `GET /api/v1/work/{id}/graph`. `200`
+with the step.
+
+### Read the graph: `GET /api/v1/work/{id}/graph`
+
+`200 {"graph": {...}, "steps": [step, ...], "edges": [{"step_id", "depends_on_id"}, ...]}` for the item's latest
+graph, steps in plan order. `404` before the item is first planned. `graph` is
+`{"id", "work_item_id", "version", "template", "inputs_hash", "state", "created_at"}`.
+
+### Replan: `POST /api/v1/work/{id}/replan`
+
+No body. For an operator after a template or config change. `200` with the new graph as above; `409
+not_replannable` unless the item is `in_progress` or `in_review`.
+
+## The item protocol (local claims)
 
 ```mermaid
 sequenceDiagram
@@ -17,11 +147,7 @@ sequenceDiagram
     participant R as Reaper (in factory serve)
     W->>F: POST /api/v1/workers {name, kind, capabilities}
     F-->>W: 200 {id, ...}
-    loop until there is work
-        W->>F: POST /api/v1/workers/{id}/claim
-        F-->>W: 204 (nothing to do), wait and retry
-    end
-    W->>F: POST /api/v1/workers/{id}/claim
+    W->>F: POST /api/v1/work/{item}/claim {worker_id}
     F-->>W: 200 item (in_progress, lease_expires_at)
     par every lease/3
         W->>F: POST /api/v1/workers/{id}/heartbeat
@@ -45,9 +171,8 @@ sequenceDiagram
 
 1. **Register** once at startup, and again whenever the worker restarts. The same `name` gets the same `id` back
    and the row is refreshed and made `active`.
-2. **Claim**: the server hands out the highest-priority `ready` item that the worker is capable of, that has no
-   unfinished dependency, and that is not waiting out a retry delay. It moves the item to `in_progress` and sets
-   `claimed_by`, `claimed_at` and `lease_expires_at`.
+2. **Claim** one `ready` item by ID. The server moves it to `in_progress`, sets `claimed_by`, `claimed_at` and
+   `lease_expires_at`, marks its graph `handed_over` and cancels the graph's unfinished steps.
 3. **Heartbeat** at least every `lease_seconds / 3` (the heartbeat response says what the lease is). Each
    heartbeat extends the lease on everything the worker holds and returns the IDs it still holds. **If an item
    the worker is working on is missing from `held`, its lease has been lost: stop working on it immediately and do
@@ -64,7 +189,9 @@ the item). Either way the call changes nothing and the worker must stop.
 ## The reaper
 
 `factory serve` runs a reaper every `lease / 5` (at least once a second). It is safe to run in more than one
-replica: rows are taken with `FOR UPDATE SKIP LOCKED` and re-checked under the lock, at most 100 per pass.
+replica: rows are taken with `FOR UPDATE SKIP LOCKED` and re-checked under the lock, at most 100 per pass. It applies
+the same rules to steps (events `step_lease_expired` and `step_stuck`) as to items; an expired step goes back to
+`ready` alone, and the steps that have succeeded stay succeeded.
 
 | Case | Detected by | Action | Attempt counted |
 | --- | --- | --- | --- |
@@ -106,13 +233,10 @@ are JSON. Unknown request fields are refused with `400 malformed_request`. Every
 
 ### Heartbeat: `POST /api/v1/workers/{id}/heartbeat`
 
-No body. `200 {"held": ["<item id>", ...], "lease_seconds": 300}`. A worker marked `gone` becomes `active` again.
+No body. `200 {"held": ["<step or item id>", ...], "lease_seconds": 300}`. A worker marked `gone` becomes `active`
+again.
 
-### Claim the next item: `POST /api/v1/workers/{id}/claim`
-
-No body. `200` with the work item, or `204` with no body when there is nothing to hand out. An item's `requires`
-(set when it is enqueued) must all appear among the worker's `harnesses` and `labels`. A worker that is not
-`active` gets `409 worker_not_active` and should heartbeat or register again.
+### The work item
 
 The work item, as every route returns it:
 
@@ -127,8 +251,8 @@ The work item, as every route returns it:
 ### Claim one item: `POST /api/v1/work/{id}/claim`
 
 `{"worker_id": "6f1c..."}`. For developers (#12): ignores capabilities and retry delay, still refuses an item that
-is not `ready` (`409 illegal_transition`) or has an unfinished dependency (`409 unfinished_dependencies`). `200`
-with the item.
+is not `ready` (`409 illegal_transition`) or has an unfinished dependency (`409 unfinished_dependencies`). Hands
+the item's graph over and cancels its unfinished steps. `200` with the item.
 
 ### Report a stage: `POST /api/v1/work/{id}/stage`
 
@@ -189,13 +313,16 @@ handle:
 | --- | --- | --- |
 | 401 | `unauthorized` | Fix the token; do not retry blindly. |
 | 404 | `not_found` | Unknown worker or item. For a worker ID, register again. |
-| 409 | `not_claimant` | The worker does not hold this item. Stop working on it. |
+| 404 | `not_found` | Also: an unknown step. |
+| 409 | `not_claimant` | The worker does not hold this item or step. Stop working on it. |
 | 409 | `lease_expired` | The lease ran out. Stop working on it. |
 | 409 | `worker_not_active` | Heartbeat or register again, then claim. |
 | 409 | `illegal_transition` | The item is not in a state that allows this; `current_state` and `allowed` say why. |
 | 409 | `unfinished_dependencies` | The item is waiting on another one. |
 | 409 | `no_outputs` | A result of `in_review` or `completed` with nothing recorded. Record outputs or report `failed`. |
 | 409 | `output_conflict` | That pull request or commit belongs to another item. |
+| 409 | `not_waiting` | Completing a step that is not a waiting wait step. |
+| 409 | `not_replannable` | Replanning an item that is not `in_progress` or `in_review`. |
 | 400 | `malformed_request` | Fix the request body. |
 | 422 | `invalid_request` | A value is invalid, such as an unknown `outcome` or output `kind`. |
 | 500 | `internal` | Retry with backoff. |
@@ -206,5 +333,5 @@ handle:
 | --- | --- | --- |
 | Lease length, and how long a silent worker lasts before `gone` | `--lease` | `5m` |
 | Stuck after, without a stage report | `--stuck-after` | `3h` |
-| Attempts before `failed` | `--max-attempts` | `3` |
-| Wait before a retried item is handed out | `--retry-delay` | `1m` |
+| Attempts per step (or item) before `failed` | `--max-attempts` | `3` |
+| Wait before a retried step or item is handed out | `--retry-delay` | `1m` |

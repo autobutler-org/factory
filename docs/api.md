@@ -24,15 +24,20 @@ to have yours used instead.
 | `GET /api/v1/work/{id}/outputs` | | `200 {"outputs": [...]}` |
 | `PUT /api/v1/work/{id}/dependencies/{blocked_by_id}` | | `204` |
 | `DELETE /api/v1/work/{id}/dependencies/{blocked_by_id}` | | `204` |
+| `GET /api/v1/work/{id}/graph` | | `200 {"graph", "steps", "edges"}`, the item's latest step graph; `404` before it is planned |
+| `POST /api/v1/work/{id}/replan` | | `200` with the new graph; `409 not_replannable` unless the item is `in_progress` or `in_review` |
 
 `GET /api/v1/work` also filters on `claimed_by=<worker id>`. States and transition rules are in
-[architecture/work.md](architecture/work.md).
+[architecture/work.md](architecture/work.md); the step graph, its states and the default template are in
+[architecture/graph.md](architecture/graph.md).
 
 ## Workers
 
-Registration, claims, heartbeats, stage and result reports, and output recording are specified in
-[architecture/workers.md](architecture/workers.md#http-contract), with the error codes workers handle
-(`not_claimant`, `lease_expired`, `worker_not_active`).
+Cluster workers claim steps (`POST /api/v1/workers/{id}/claim`) and report on them under
+`/api/v1/steps/{id}/` (`stage`, `result`, `release`); adapters complete wait steps with
+`POST /api/v1/steps/{id}/complete`. Developers claim whole items under `/api/v1/work/{id}/` (`claim`, `stage`,
+`result`, `release`, `outputs`). Both are specified in [architecture/workers.md](architecture/workers.md), with
+the error codes workers handle (`not_claimant`, `lease_expired`, `worker_not_active`, `not_waiting`).
 
 ### Enqueueing work
 
@@ -83,12 +88,15 @@ Every error has the same shape:
 | --- | --- | --- |
 | 400 | `malformed_request` | The body is not JSON, has unknown fields, or has trailing data. |
 | 401 | `unauthorized` | Missing or wrong bearer token. |
-| 404 | `not_found` | No such route, item or dependency. |
+| 404 | `not_found` | No such route, item, dependency, step, or graph. |
 | 409 | `illegal_transition` | The state machine forbids the move. Carries `current_state` and `allowed`. |
 | 409 | `unfinished_dependencies` | Work would start while an item it is blocked by is unfinished. |
 | 409 | `outputs_pending` | Completing an item with no merged output or an open one. |
 | 409 | `no_outputs` | A worker finished without recording an open or merged output. |
 | 409 | `output_conflict` | The output already belongs to another item. |
+| 409 | `not_claimant`, `lease_expired`, `worker_not_active` | Worker protocol; see [architecture/workers.md](architecture/workers.md#errors). |
+| 409 | `not_waiting` | Completing a step that is not a wait step waiting for its event. |
+| 409 | `not_replannable` | Replanning an item that is not `in_progress` or `in_review`. |
 | 413 | `body_too_large` | The body is over 1 MiB. |
 | 422 | `invalid_request` | The body parsed but a value is invalid, including an unknown `blocked_by`. |
 | 503 | `not_ready` | From `/readyz` only. |

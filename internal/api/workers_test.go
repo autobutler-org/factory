@@ -23,15 +23,11 @@ func TestWorkerProtocol(t *testing.T) {
 		t.Errorf("bad kind: %d", resp.StatusCode)
 	}
 
-	if resp := c.do(http.MethodPost, "/api/v1/workers/"+a.ID+"/claim", "", nil); resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("claim with nothing ready: %d, want 204", resp.StatusCode)
-	}
+	// Item-level claims are for local developers (#12); cluster workers claim
+	// steps (steps_test.go).
 	gpu := c.enqueue(`{"title":"needs gpu","requires":["gpu"]}`).Item
-	if resp := c.do(http.MethodPost, "/api/v1/workers/"+b.ID+"/claim", "", nil); resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("b without a gpu: %d, want 204", resp.StatusCode)
-	}
 	var claimed item
-	if resp := c.do(http.MethodPost, "/api/v1/workers/"+a.ID+"/claim", "", &claimed); resp.StatusCode != http.StatusOK || claimed.ID != gpu.ID || claimed.State != "in_progress" {
+	if resp := c.do(http.MethodPost, "/api/v1/work/"+gpu.ID+"/claim", `{"worker_id":"`+a.ID+`"}`, &claimed); resp.StatusCode != http.StatusOK || claimed.ID != gpu.ID || claimed.State != "in_progress" {
 		t.Fatalf("a claims: %d %+v", resp.StatusCode, claimed)
 	}
 

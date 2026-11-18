@@ -182,6 +182,11 @@ check/attribution: ## Fail if a pull request carries AI attribution (PR=number)
 generate/sqlc: ## Generate the Go code in internal/db from sql/queries and the migrations
 	$(GO) tool sqlc generate
 
+.PHONY: generate/golden
+generate/golden: ## Rewrite the planner's golden graphs in internal/plan/testdata after an intended change
+	mkdir -p internal/plan/testdata
+	FACTORY_UPDATE_GOLDEN=1 $(GO) test ./internal/plan -run TestGolden -count=1
+
 .PHONY: format
 format: ## Format Go code (gci, gofumpt, goimports)
 	$(GO) tool golangci-lint fmt $(GOLINT_ARGS)

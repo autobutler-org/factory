@@ -1,0 +1,356 @@
+{
+  "template": "default",
+  "inputs_hash": "f10b8db7dd15413a2b9c825d3bba1ab7cd369fc21be77db41cf1e13f0b131347",
+  "steps": [
+    {
+      "key": "o/quark/workspace",
+      "kind": "workspace",
+      "params": {
+        "branch": "factory/b2e9c0de-0000-4000-8000-000000000001",
+        "repo": "o/quark"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "depends_on": []
+    },
+    {
+      "key": "o/quark/implement",
+      "kind": "implement",
+      "params": {
+        "repo": "o/quark"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "depends_on": [
+        "o/quark/workspace"
+      ]
+    },
+    {
+      "key": "o/quark/gate",
+      "kind": "gate",
+      "params": {
+        "repo": "o/quark"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "depends_on": [
+        "o/quark/implement"
+      ]
+    },
+    {
+      "key": "o/quark/secret_scan",
+      "kind": "secret_scan",
+      "params": {
+        "repo": "o/quark"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "depends_on": [
+        "o/quark/gate"
+      ]
+    },
+    {
+      "key": "o/quark/open_pr",
+      "kind": "open_pr",
+      "params": {
+        "repo": "o/quark"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "depends_on": [
+        "o/quark/secret_scan"
+      ]
+    },
+    {
+      "key": "o/quark/review-1",
+      "kind": "review",
+      "params": {
+        "last": false,
+        "repo": "o/quark",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "depends_on": [
+        "o/quark/open_pr"
+      ]
+    },
+    {
+      "key": "o/quark/fix-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/quark/review-1",
+        "repo": "o/quark",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "condition": "o/quark/review-1 == changes",
+      "depends_on": [
+        "o/quark/review-1"
+      ]
+    },
+    {
+      "key": "o/quark/review-2",
+      "kind": "review",
+      "params": {
+        "last": false,
+        "repo": "o/quark",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "condition": "o/quark/review-1 == changes",
+      "depends_on": [
+        "o/quark/fix-1"
+      ]
+    },
+    {
+      "key": "o/quark/fix-2",
+      "kind": "fix",
+      "params": {
+        "findings": "o/quark/review-2",
+        "repo": "o/quark",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "condition": "o/quark/review-2 == changes",
+      "depends_on": [
+        "o/quark/review-2"
+      ]
+    },
+    {
+      "key": "o/quark/review-3",
+      "kind": "review",
+      "params": {
+        "last": true,
+        "repo": "o/quark",
+        "round": 3
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "condition": "o/quark/review-2 == changes",
+      "depends_on": [
+        "o/quark/fix-2"
+      ]
+    },
+    {
+      "key": "o/quark/await_checks-1",
+      "kind": "await_checks",
+      "params": {
+        "last": false,
+        "repo": "o/quark",
+        "round": 1
+      },
+      "sandbox_key": "",
+      "depends_on": [
+        "o/quark/review-3"
+      ]
+    },
+    {
+      "key": "o/quark/fix-checks-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/quark/await_checks-1",
+        "repo": "o/quark",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "condition": "o/quark/await_checks-1 == fail",
+      "depends_on": [
+        "o/quark/await_checks-1"
+      ]
+    },
+    {
+      "key": "o/quark/await_checks-2",
+      "kind": "await_checks",
+      "params": {
+        "last": true,
+        "repo": "o/quark",
+        "round": 2
+      },
+      "sandbox_key": "",
+      "condition": "o/quark/await_checks-1 == fail",
+      "depends_on": [
+        "o/quark/fix-checks-1"
+      ]
+    },
+    {
+      "key": "o/quark/merge",
+      "kind": "merge",
+      "params": {
+        "repo": "o/quark"
+      },
+      "sandbox_key": "",
+      "depends_on": [
+        "o/quark/await_checks-2"
+      ]
+    },
+    {
+      "key": "o/web/workspace",
+      "kind": "workspace",
+      "params": {
+        "branch": "factory/b2e9c0de-0000-4000-8000-000000000001",
+        "repo": "o/web"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "depends_on": []
+    },
+    {
+      "key": "o/web/implement",
+      "kind": "implement",
+      "params": {
+        "repo": "o/web"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "depends_on": [
+        "o/web/workspace"
+      ]
+    },
+    {
+      "key": "o/web/gate",
+      "kind": "gate",
+      "params": {
+        "repo": "o/web"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "depends_on": [
+        "o/web/implement"
+      ]
+    },
+    {
+      "key": "o/web/secret_scan",
+      "kind": "secret_scan",
+      "params": {
+        "repo": "o/web"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "depends_on": [
+        "o/web/gate"
+      ]
+    },
+    {
+      "key": "o/web/open_pr",
+      "kind": "open_pr",
+      "params": {
+        "repo": "o/web"
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "depends_on": [
+        "o/web/secret_scan"
+      ]
+    },
+    {
+      "key": "o/web/review-1",
+      "kind": "review",
+      "params": {
+        "last": false,
+        "repo": "o/web",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "depends_on": [
+        "o/web/open_pr"
+      ]
+    },
+    {
+      "key": "o/web/fix-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/web/review-1",
+        "repo": "o/web",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "condition": "o/web/review-1 == changes",
+      "depends_on": [
+        "o/web/review-1"
+      ]
+    },
+    {
+      "key": "o/web/review-2",
+      "kind": "review",
+      "params": {
+        "last": false,
+        "repo": "o/web",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "condition": "o/web/review-1 == changes",
+      "depends_on": [
+        "o/web/fix-1"
+      ]
+    },
+    {
+      "key": "o/web/fix-2",
+      "kind": "fix",
+      "params": {
+        "findings": "o/web/review-2",
+        "repo": "o/web",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "condition": "o/web/review-2 == changes",
+      "depends_on": [
+        "o/web/review-2"
+      ]
+    },
+    {
+      "key": "o/web/review-3",
+      "kind": "review",
+      "params": {
+        "last": true,
+        "repo": "o/web",
+        "round": 3
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "condition": "o/web/review-2 == changes",
+      "depends_on": [
+        "o/web/fix-2"
+      ]
+    },
+    {
+      "key": "o/web/await_checks-1",
+      "kind": "await_checks",
+      "params": {
+        "last": false,
+        "repo": "o/web",
+        "round": 1
+      },
+      "sandbox_key": "",
+      "depends_on": [
+        "o/web/review-3"
+      ]
+    },
+    {
+      "key": "o/web/fix-checks-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/web/await_checks-1",
+        "repo": "o/web",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/web",
+      "condition": "o/web/await_checks-1 == fail",
+      "depends_on": [
+        "o/web/await_checks-1"
+      ]
+    },
+    {
+      "key": "o/web/await_checks-2",
+      "kind": "await_checks",
+      "params": {
+        "last": true,
+        "repo": "o/web",
+        "round": 2
+      },
+      "sandbox_key": "",
+      "condition": "o/web/await_checks-1 == fail",
+      "depends_on": [
+        "o/web/fix-checks-1"
+      ]
+    },
+    {
+      "key": "o/web/merge",
+      "kind": "merge",
+      "params": {
+        "repo": "o/web"
+      },
+      "sandbox_key": "",
+      "depends_on": [
+        "o/web/await_checks-2"
+      ]
+    }
+  ]
+}
