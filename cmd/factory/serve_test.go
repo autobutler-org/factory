@@ -25,6 +25,8 @@ func TestServeRefusesBeforeListening(t *testing.T) {
 		{name: "bad addr", args: []string{"--addr", "nope"}, wantCode: 2, wantStderr: "--addr"},
 		{name: "public bind without a token", args: []string{"--addr", "0.0.0.0:8080"}, wantCode: 2, wantStderr: "Set FACTORY_API_TOKEN"},
 		{name: "all interfaces without a token", args: []string{"--addr", ":8080"}, wantCode: 2, wantStderr: "Set FACTORY_API_TOKEN"},
+		{name: "zero attempts", args: []string{"--max-attempts", "0"}, wantCode: 2, wantStderr: "max-attempts"},
+		{name: "bad duration", args: []string{"--lease", "soon"}, wantCode: 2, wantStderr: "lease"},
 		{name: "no database", args: nil, wantCode: 1, wantStderr: db.ErrNoDatabaseURL.Error()},
 	}
 	for _, tt := range tests {

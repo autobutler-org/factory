@@ -1,8 +1,8 @@
 -- name: InsertItem :one
 -- Conflicts on (source, external_id) or idempotency_key insert nothing.
-INSERT INTO work_items (source, external_id, external_url, title, body, repos, state, priority, idempotency_key)
+INSERT INTO work_items (source, external_id, external_url, title, body, repos, state, priority, idempotency_key, requires)
 VALUES (sqlc.narg(source), sqlc.narg(external_id), sqlc.narg(external_url), @title, @body, @repos::text[], @state, @priority,
-        sqlc.narg(idempotency_key))
+        sqlc.narg(idempotency_key), @requires::text[])
 ON CONFLICT DO NOTHING
 RETURNING *;
 
@@ -28,6 +28,7 @@ SELECT * FROM work_items
 WHERE (sqlc.narg(state)::text IS NULL OR state = sqlc.narg(state))
   AND (sqlc.narg(source)::text IS NULL OR source = sqlc.narg(source))
   AND (sqlc.narg(repo)::text IS NULL OR sqlc.narg(repo) = ANY (repos))
+  AND (sqlc.narg(claimed_by)::uuid IS NULL OR claimed_by = sqlc.narg(claimed_by))
   AND (sqlc.narg(after_id)::uuid IS NULL
        OR priority < sqlc.narg(after_priority)::integer
        OR (priority = sqlc.narg(after_priority)::integer
@@ -36,9 +37,14 @@ ORDER BY priority DESC, created_at, id
 LIMIT @max_rows;
 
 -- name: UpdateItemState :one
+-- A claim exists only while an item is in_progress, so leaving it drops the claim.
 UPDATE work_items
 SET state = @state, state_reason = @state_reason, outputs_done = @outputs_done,
-    updated_at = now(), state_changed_at = now()
+    updated_at = now(), state_changed_at = now(),
+    claimed_by = CASE WHEN @state::text = 'in_progress' THEN claimed_by END,
+    claimed_at = CASE WHEN @state::text = 'in_progress' THEN claimed_at END,
+    lease_expires_at = CASE WHEN @state::text = 'in_progress' THEN lease_expires_at END,
+    stage_reported_at = CASE WHEN @state::text = 'in_progress' THEN stage_reported_at END
 WHERE id = @id
 RETURNING *;
 

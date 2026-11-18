@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobutler-org/factory/internal/api"
 	"github.com/autobutler-org/factory/internal/db"
+	"github.com/autobutler-org/factory/internal/lease"
 	"github.com/autobutler-org/factory/internal/work"
 )
 
@@ -25,6 +26,14 @@ Refuses to start against a database that is behind this binary's migrations.
 Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_ADDR):
   --addr ADDR          listen address (default 127.0.0.1:8080)
   --database-url URL   Postgres URL (env FACTORY_DATABASE_URL)
+  --lease DURATION     how long a claim lasts without a heartbeat; a worker
+                       silent this long is marked gone (default 5m)
+  --stuck-after DURATION
+                       revoke a claim with no stage report for this long and
+                       count an attempt (default 3h)
+  --max-attempts N     failed attempts before an item is failed (default 3)
+  --retry-delay DURATION
+                       wait before handing out a retried item (default 1m)
 
 Environment:
   FACTORY_API_TOKEN    bearer token required on /api/v1. When unset the API is
@@ -41,6 +50,11 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	fs.SetOutput(io.Discard)
 	addr := fs.String("addr", "127.0.0.1:8080", "")
 	databaseURL := fs.String("database-url", "", "")
+	defaults := lease.DefaultPolicy()
+	leaseFor := fs.Duration("lease", defaults.Lease, "")
+	stuckAfter := fs.Duration("stuck-after", defaults.StuckAfter, "")
+	maxAttempts := fs.Int("max-attempts", defaults.MaxAttempts, "")
+	retryDelay := fs.Duration("retry-delay", defaults.RetryDelay, "")
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, serveUsage)
@@ -51,6 +65,11 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	if fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "factory serve: unexpected argument %q\n%s", fs.Arg(0), serveUsage)
+		return 2
+	}
+	policy := lease.Policy{Lease: *leaseFor, StuckAfter: *stuckAfter, MaxAttempts: *maxAttempts, RetryDelay: *retryDelay}
+	if err := policy.Validate(); err != nil {
+		fmt.Fprintf(stderr, "factory serve: %v\n%s", err, serveUsage)
 		return 2
 	}
 	host, _, err := net.SplitHostPort(*addr)
@@ -89,8 +108,9 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		}
 		return db.CheckMigrated(ctx, pool)
 	}
+	svc := work.New(pool).WithPolicy(policy)
 	srv := &http.Server{
-		Handler:           api.New(api.Config{Work: work.New(pool), Ready: ready, Token: token, Logger: logger}),
+		Handler:           api.New(api.Config{Work: svc, Ready: ready, Token: token, Logger: logger}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -106,6 +126,13 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		logger.Warn("FACTORY_API_TOKEN is not set: the API is unauthenticated and bound to loopback only", "addr", listener.Addr().String())
 	}
 	logger.Info("serving", "addr", listener.Addr().String())
+
+	reaperDone := make(chan struct{})
+	go func() {
+		defer close(reaperDone)
+		reap(ctx, svc, max(policy.Lease/5, time.Second), logger)
+	}()
+	defer func() { <-reaperDone }()
 
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(listener) }()
@@ -123,6 +150,27 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	logger.Info("stopped")
 	return 0
+}
+
+// reap runs the lease reaper every interval until ctx ends. Several replicas
+// may run it at once; Reap takes rows with SKIP LOCKED.
+func reap(ctx context.Context, svc *work.Service, interval time.Duration, logger *slog.Logger) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		report, err := svc.Reap(ctx)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			logger.Error("reaper pass failed", "err", err)
+		case report != work.ReapReport{}:
+			logger.Info("reaper pass", "expired", report.Expired, "stuck", report.Stuck, "gone", report.Gone)
+		}
+	}
 }
 
 func isLoopback(host string) bool {

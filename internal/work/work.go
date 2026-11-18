@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/autobutler-org/factory/internal/db"
+	"github.com/autobutler-org/factory/internal/lease"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -144,12 +145,18 @@ type Actor struct {
 
 // Service is the work item service.
 type Service struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	policy lease.Policy
 }
 
-// New returns a Service backed by pool.
+// New returns a Service backed by pool with lease.DefaultPolicy.
 func New(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool}
+	return &Service{pool: pool, policy: lease.DefaultPolicy()}
+}
+
+// WithPolicy returns a copy of s that leases work with p.
+func (s *Service) WithPolicy(p lease.Policy) *Service {
+	return &Service{pool: s.pool, policy: p}
 }
 
 // NewItem is a work item to create or upsert. Source and ExternalID are both
@@ -168,6 +175,9 @@ type NewItem struct {
 	State          string
 	Priority       int32
 	BlockedBy      []string
+	// Requires lists the capabilities (harnesses or labels) a worker needs
+	// to be handed this item.
+	Requires []string
 }
 
 // UpsertResult is the item an Upsert left behind and what it did.
@@ -193,6 +203,8 @@ func (in NewItem) validate() error {
 		return fmt.Errorf("%w: state must be design or ready, not %q", ErrInvalid, in.State)
 	case slices.Contains(in.Repos, ""):
 		return fmt.Errorf("%w: repos must not contain an empty string", ErrInvalid)
+	case slices.Contains(in.Requires, ""):
+		return fmt.Errorf("%w: requires must not contain an empty string", ErrInvalid)
 	}
 	return nil
 }
@@ -212,6 +224,10 @@ func (s *Service) Upsert(ctx context.Context, in NewItem, actor Actor) (UpsertRe
 	if repos == nil {
 		repos = []string{}
 	}
+	requires := in.Requires
+	if requires == nil {
+		requires = []string{}
+	}
 	key := nilIfEmpty(in.IdempotencyKey)
 	if in.Source != "" {
 		key = nil // the external identity already dedupes
@@ -228,7 +244,7 @@ func (s *Service) Upsert(ctx context.Context, in NewItem, actor Actor) (UpsertRe
 		}
 		item, err := q.InsertItem(ctx, db.InsertItemParams{
 			Source: nilIfEmpty(in.Source), ExternalID: nilIfEmpty(in.ExternalID), ExternalUrl: nilIfEmpty(in.ExternalURL),
-			Title: in.Title, Body: in.Body, Repos: repos, State: state, Priority: in.Priority, IdempotencyKey: key,
+			Title: in.Title, Body: in.Body, Repos: repos, State: state, Priority: in.Priority, IdempotencyKey: key, Requires: requires,
 		})
 		switch {
 		case err == nil:
@@ -307,11 +323,12 @@ func (s *Service) Get(ctx context.Context, id string) (db.WorkItem, error) {
 // Filter narrows List. Empty fields do not filter. Cursor is the value List
 // returned for the previous page.
 type Filter struct {
-	State  string
-	Source string
-	Repo   string
-	Limit  int
-	Cursor string
+	State     string
+	Source    string
+	Repo      string
+	ClaimedBy string
+	Limit     int
+	Cursor    string
 }
 
 type cursor struct {
@@ -326,11 +343,14 @@ func (s *Service) List(ctx context.Context, f Filter) ([]db.WorkItem, string, er
 	if f.State != "" && AllowedTargets(f.State) == nil {
 		return nil, "", fmt.Errorf("%w: unknown state %q", ErrInvalid, f.State)
 	}
+	if f.ClaimedBy != "" && !uuidPattern.MatchString(f.ClaimedBy) {
+		return nil, "", fmt.Errorf("%w: claimed_by must be a worker id", ErrInvalid)
+	}
 	limit := f.Limit
 	if limit <= 0 || limit > maxListLimit {
 		limit = maxListLimit
 	}
-	params := db.ListItemsParams{State: nilIfEmpty(f.State), Source: nilIfEmpty(f.Source), Repo: nilIfEmpty(f.Repo), MaxRows: int32(limit + 1)}
+	params := db.ListItemsParams{State: nilIfEmpty(f.State), Source: nilIfEmpty(f.Source), Repo: nilIfEmpty(f.Repo), ClaimedBy: nilIfEmpty(f.ClaimedBy), MaxRows: int32(limit + 1)}
 	if f.Cursor != "" {
 		raw, err := base64.RawURLEncoding.DecodeString(f.Cursor)
 		var c cursor
