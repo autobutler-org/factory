@@ -30,6 +30,7 @@ import (
 	"github.com/autobutler-org/factory/internal/lease"
 	"github.com/autobutler-org/factory/internal/work"
 	"github.com/autobutler-org/factory/internal/worker"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -39,6 +40,7 @@ const (
 
 type env struct {
 	t      *testing.T
+	pool   *pgxpool.Pool
 	svc    *work.Service
 	gh     *fakegh.Server
 	api    string
@@ -69,8 +71,8 @@ func newEnv(t *testing.T, gate string, maxAttempts int) *env {
 	e := &env{t: t, agentDir: t.TempDir(), origin: t.TempDir()}
 	e.marker = filepath.Join(t.TempDir(), "gate-ran")
 
-	pool := dbtest.NewDB(t)
-	e.svc = work.New(pool).WithPolicy(lease.Policy{Lease: time.Minute, StuckAfter: time.Hour, MaxAttempts: maxAttempts, RetryDelay: 0})
+	e.pool = dbtest.NewDB(t)
+	e.svc = work.New(e.pool).WithPolicy(lease.Policy{Lease: time.Minute, StuckAfter: time.Hour, MaxAttempts: maxAttempts, RetryDelay: 0})
 	e.gh = fakegh.New(t, repo, ghToken)
 	mint := func(context.Context, string) (codehost.Token, error) {
 		return codehost.Token{Token: ghToken, ExpiresAt: time.Now().Add(time.Hour)}, nil

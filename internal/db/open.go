@@ -1,5 +1,7 @@
 // Package db is factory's Postgres layer: the connection pool, the embedded
-// golang-migrate migrations, and the queries sqlc generates from sql/queries.
+// golang-migrate migrations, the queries sqlc generates from sql/queries, and
+// TryLock, a session advisory lock for work only one server replica may do
+// at a time.
 //
 // It holds no business rules. Which rows may change and how is decided by the
 // service packages that call it (internal/work). Postgres is the only store;

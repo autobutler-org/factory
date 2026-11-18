@@ -17,8 +17,9 @@ make test/e2e   # the worker's end-to-end tests, against the same Postgres
 ```
 
 Run the server against a migrated database with `factory migrate up` then `factory serve`, and a worker with
-`factory worker --url ...`; [docs/config.md](docs/config.md)
-lists the settings and [docs/api.md](docs/api.md) the routes.
+`factory worker --url ...`; [docs/config.md](docs/config.md) lists the settings and [docs/api.md](docs/api.md) the
+routes. [docs/operations.md](docs/operations.md) covers the container images and installing the Helm chart in
+`deploy/chart`.
 
 See [AGENTS.md](AGENTS.md) for the layout and conventions, and [CONTRIBUTING.md](CONTRIBUTING.md) for how to
 open a pull request.

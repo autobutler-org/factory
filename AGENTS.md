@@ -25,13 +25,16 @@ internal/harness/   drives agent CLIs (Claude Code, Grok) for a session; harness
 internal/repoconfig/ parses a repository's .factory/config.toml
 internal/secretscan/ finds credential-shaped literals in the lines a branch adds
 cmd/fakeagent/      a scripted stand-in for an agent CLI, for tests
+internal/launcher/  the server's launcher: plans ready items, starts one sandbox per runnable chain, runs merge (#17)
 sql/queries/        the SQL sqlc compiles into internal/db
 compose.yaml        the development Postgres, on loopback
+Dockerfile          the server image (distroless, non-root); Dockerfile.worker is the agent dev container
+deploy/chart/       the Helm chart; values-autobutler.example.yaml matches our cluster (docs/operations.md)
 web/                the web UI, embedded in the binary (#14)
-docs/               api.md, config.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols and worker HTTP contract; worker.md: what `factory worker` does per step kind; codehost.md: the code host and its tokens)
+docs/               api.md, config.md, operations.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols, worker HTTP contract and the launcher; worker.md: what `factory worker` does per step kind; codehost.md: the code host and its tokens)
 build/              build output (./build/factory); not source
-.github/workflows/  ci.yml (build, race tests, test-db and e2e on Postgres), check.yml (make check, govulncheck, attribution),
-                    pr-title.yml, auto-assign-author.yml
+.github/workflows/  ci.yml (build, race tests, test-db and e2e on Postgres), check.yml (make check, govulncheck, attribution,
+                    chart), images.yml (builds both images; pushes them on v* tags), pr-title.yml, auto-assign-author.yml
 ```
 
 `web/` does not exist yet. The issue that first needs each one creates it.
@@ -52,6 +55,8 @@ comment so `make help` lists it.
 | `make format`    | `golangci-lint fmt` (gci, gofumpt, goimports); rewrites files                 |
 | `make fix`       | applies lint autofixes, then formats                                          |
 | `make tidy`      | `go mod tidy`                                                                 |
+| `make check/chart` | `helm lint` and `helm template` of `deploy/chart` with default and example values |
+| `make build/image`, `make build/image/worker` | the server and worker images, with the version stamped in (needs Docker) |
 
 - The Go version is pinned once, on the `go` line of `go.mod`. The Makefile reads it into `GOTOOLCHAIN`.
 - Dev tools (golangci-lint, gofumpt, gci, goimports, govulncheck, air) are `tool` directives in `go.mod` and

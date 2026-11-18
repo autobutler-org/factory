@@ -27,9 +27,21 @@ const (
 	nameValue       = "factory-worker"
 	managedByValue  = "factory"
 	workerContainer = "worker"
+	// annotationKey holds the sandbox key of the chain a Job serves.
+	annotationKey = "factory.autobutler.org/sandbox-key"
 
-	// The worker authenticates to the factory server with a projected
-	// ServiceAccount token for this audience (issue #15).
+	// WorkspaceDir is where the worker's emptyDir workspace is mounted.
+	WorkspaceDir    = "/workspace"
+	workspaceVolume = "workspace"
+
+	// Keys in the Secrets the worker's credentials come from.
+	apiTokenSecretKey = "token"
+	modelKeySecretKey = "api-key"
+
+	// The projected ServiceAccount token for this audience is mounted for
+	// #15, which will verify it. It is not given to the worker as
+	// FACTORY_TOKEN_FILE yet: until then the worker sends the shared API
+	// token from FACTORY_API_TOKEN.
 	tokenAudience   = "factory"
 	tokenDir        = "/var/run/factory"
 	tokenFile       = "token"
@@ -39,6 +51,8 @@ const (
 	// Finished Jobs stay this long so their logs can be read, then
 	// Kubernetes deletes them.
 	finishedJobTTL = int32(3600)
+
+	terminationGrace = int64(60)
 )
 
 // JobsConfig is what every worker Job is built from.
@@ -55,6 +69,20 @@ type JobsConfig struct {
 	// RuntimeClassName selects a sandboxing runtime such as gVisor. Empty
 	// means the cluster default.
 	RuntimeClassName string
+	// NodeSelector and Tolerations place worker pods on the worker nodes.
+	NodeSelector map[string]string
+	Tolerations  []corev1.Toleration
+	// Resources are the worker container's requests and limits, including
+	// ephemeral-storage for clones and build output.
+	Resources corev1.ResourceRequirements
+	// APITokenSecret names a Secret in Namespace whose key "token" is the
+	// factory API bearer token, given to the worker as FACTORY_API_TOKEN.
+	// Empty gives the worker none.
+	APITokenSecret string
+	// ModelKeySecret names a Secret in Namespace whose key "api-key" is the
+	// model API key, given to the worker as ANTHROPIC_API_KEY. Empty gives
+	// the worker none.
+	ModelKeySecret string
 }
 
 // Jobs is a Runtime that runs each sandbox as a Kubernetes Job with one pod,
@@ -123,50 +151,95 @@ func workerLabels() map[string]string {
 	return map[string]string{labelName: nameValue, labelManagedBy: managedByValue}
 }
 
-func (j *Jobs) job(name string) *batchv1.Job {
+func secretEnv(name, secret, key string) []corev1.EnvVar {
+	if secret == "" {
+		return nil
+	}
+	return []corev1.EnvVar{{Name: name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: secret}, Key: key,
+	}}}}
+}
+
+func (j *Jobs) job(name, key string) *batchv1.Job {
 	var runtimeClass *string
 	if j.cfg.RuntimeClassName != "" {
 		runtimeClass = new(j.cfg.RuntimeClassName)
 	}
+	env := []corev1.EnvVar{
+		{Name: "FACTORY_URL", Value: j.cfg.ServerURL},
+		// The name the worker registers under, and the chain it claims.
+		{Name: "FACTORY_SANDBOX", Value: name},
+		{Name: "FACTORY_SANDBOX_KEY", Value: key},
+		{Name: "FACTORY_WORK_DIR", Value: WorkspaceDir},
+		// The worker image installs Claude Code only.
+		{Name: "FACTORY_HARNESSES", Value: "claude-code"},
+	}
+	env = append(env, secretEnv("FACTORY_API_TOKEN", j.cfg.APITokenSecret, apiTokenSecretKey)...)
+	env = append(env, secretEnv("ANTHROPIC_API_KEY", j.cfg.ModelKeySecret, modelKeySecretKey)...)
 	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: j.cfg.Namespace, Labels: workerLabels()},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: j.cfg.Namespace, Labels: workerLabels(),
+			Annotations: map[string]string{annotationKey: key},
+		},
 		Spec: batchv1.JobSpec{
-			// A worker that dies is not retried by the Job: its item goes
-			// back to ready and the next reconcile starts a fresh sandbox.
+			// A worker that dies is not retried by the Job: its step goes
+			// back to ready and the next pass of the launcher starts a fresh
+			// sandbox for the chain.
 			BackoffLimit:            new(int32(0)),
 			TTLSecondsAfterFinished: new(finishedJobTTL),
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: workerLabels()},
+				ObjectMeta: metav1.ObjectMeta{Labels: workerLabels(), Annotations: map[string]string{annotationKey: key}},
 				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyNever,
-					ServiceAccountName:           j.cfg.ServiceAccountName,
-					AutomountServiceAccountToken: new(false),
-					RuntimeClassName:             runtimeClass,
+					RestartPolicy: corev1.RestartPolicyNever,
+					// Time for the worker to release its step on SIGTERM.
+					TerminationGracePeriodSeconds: new(terminationGrace),
+					ServiceAccountName:            j.cfg.ServiceAccountName,
+					AutomountServiceAccountToken:  new(false),
+					RuntimeClassName:              runtimeClass,
+					NodeSelector:                  j.cfg.NodeSelector,
+					Tolerations:                   j.cfg.Tolerations,
+					// What Pod Security "restricted" requires. The image runs
+					// as a numeric non-root user.
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot:   new(true),
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+					},
 					Containers: []corev1.Container{{
-						Name:  workerContainer,
-						Image: j.cfg.Image,
-						Args:  []string{"worker"},
-						Env: []corev1.EnvVar{
-							{Name: "FACTORY_URL", Value: j.cfg.ServerURL},
-							{Name: "FACTORY_SANDBOX", Value: name},
-							{Name: "FACTORY_TOKEN_FILE", Value: tokenDir + "/" + tokenFile},
+						Name:      workerContainer,
+						Image:     j.cfg.Image,
+						Args:      []string{"worker"},
+						Env:       env,
+						Resources: j.cfg.Resources,
+						SecurityContext: &corev1.SecurityContext{
+							AllowPrivilegeEscalation: new(false),
+							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 						},
-						VolumeMounts: []corev1.VolumeMount{{Name: tokenVolume, MountPath: tokenDir, ReadOnly: true}},
+						VolumeMounts: []corev1.VolumeMount{
+							{Name: tokenVolume, MountPath: tokenDir, ReadOnly: true},
+							{Name: workspaceVolume, MountPath: WorkspaceDir},
+						},
 					}},
-					Volumes: []corev1.Volume{{
-						Name: tokenVolume,
-						VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
-							Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
-								Audience:          tokenAudience,
-								ExpirationSeconds: new(tokenExpiration),
-								Path:              tokenFile,
-							}}},
-						}},
-					}},
+					Volumes: []corev1.Volume{
+						{
+							Name: tokenVolume,
+							VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+								Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+									Audience:          tokenAudience,
+									ExpirationSeconds: new(tokenExpiration),
+									Path:              tokenFile,
+								}}},
+							}},
+						},
+						{Name: workspaceVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+					},
 				},
 			},
 		},
 	}
+}
+
+func sandboxOf(job *batchv1.Job) Sandbox {
+	return Sandbox{Name: job.Name, Key: job.Annotations[annotationKey], Phase: phase(job), Created: job.CreationTimestamp.Time}
 }
 
 // phase maps a Job's status to a sandbox phase.
@@ -189,18 +262,18 @@ func phase(job *batchv1.Job) Phase {
 }
 
 // Ensure implements Runtime.
-func (j *Jobs) Ensure(ctx context.Context, name string) (Sandbox, error) {
+func (j *Jobs) Ensure(ctx context.Context, name, key string) (Sandbox, error) {
 	if name == "" {
 		return Sandbox{}, errors.New("ensure sandbox: name is empty")
 	}
-	created, err := j.client.BatchV1().Jobs(j.cfg.Namespace).Create(ctx, j.job(name), metav1.CreateOptions{})
+	created, err := j.client.BatchV1().Jobs(j.cfg.Namespace).Create(ctx, j.job(name, key), metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		return j.Status(ctx, name)
 	}
 	if err != nil {
 		return Sandbox{}, fmt.Errorf("ensure sandbox %q: create job: %w", name, err)
 	}
-	return Sandbox{Name: name, Phase: phase(created)}, nil
+	return sandboxOf(created), nil
 }
 
 // Status implements Runtime.
@@ -212,7 +285,7 @@ func (j *Jobs) Status(ctx context.Context, name string) (Sandbox, error) {
 	if err != nil {
 		return Sandbox{}, fmt.Errorf("sandbox %q: get job: %w", name, err)
 	}
-	return Sandbox{Name: name, Phase: phase(job)}, nil
+	return sandboxOf(job), nil
 }
 
 // List implements Runtime.
@@ -225,7 +298,7 @@ func (j *Jobs) List(ctx context.Context) ([]Sandbox, error) {
 	}
 	out := make([]Sandbox, 0, len(jobs.Items))
 	for i := range jobs.Items {
-		out = append(out, Sandbox{Name: jobs.Items[i].Name, Phase: phase(&jobs.Items[i])})
+		out = append(out, sandboxOf(&jobs.Items[i]))
 	}
 	slices.SortFunc(out, func(a, b Sandbox) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil

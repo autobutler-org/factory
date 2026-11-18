@@ -1,0 +1,53 @@
+# Example values for the autobutler AKS cluster (Kubernetes 1.37).
+#
+#   helm upgrade --install factory deploy/chart -n factory \
+#     -f deploy/chart/values-autobutler.example.yaml --set image.tag=<release>
+#
+# The server runs in `factory`, workers in `factory-workers` (Pod Security restricted, ResourceQuota `workers`).
+# Both namespaces exist already; the chart creates neither.
+
+# Images come from ghcr.io/autobutler-org, the chart defaults.
+
+# The Postgres URL Secret in `factory`.
+database:
+  secretName: factory-database
+  secretKey: url
+
+# The GitHub App that mints workers' repository tokens. Set appId (with --set github.appId=...) once the App
+# exists; the private key Secret is in `factory` with the key private-key.pem.
+github:
+  appId: ""
+  privateKeySecretName: factory-github-app
+
+# factory.cloud.autobutler.org points at this load balancer's public IP. There is no ingress, and the
+# Service is plain HTTP: no TLS until that is resolved.
+service:
+  type: LoadBalancer
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-resource-group: autobutler-factory
+    service.beta.kubernetes.io/azure-pip-name: autobutler-factory-ingress-pip
+
+launcher:
+  enabled: true
+  # The worker node pool (arm64).
+  nodeSelector:
+    factory.autobutler.org/workers: "true"
+  tolerations:
+    - key: factory.autobutler.org/workers
+      value: "true"
+      effect: NoSchedule
+  # The cluster has no gVisor RuntimeClass.
+  runtimeClassName: ""
+
+workers:
+  namespace: factory-workers
+
+# The cluster's CNI is Cilium with FQDN egress policy available.
+networkPolicy:
+  enabled: true
+  cilium: true
+
+metrics:
+  podMonitor:
+    # Managed Prometheus picks up azmonitoring.coreos.com/v1 PodMonitors, but there is no /metrics yet (#13).
+    enabled: false

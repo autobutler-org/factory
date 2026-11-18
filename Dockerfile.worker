@@ -1,0 +1,120 @@
+# The factory worker image: the dev container every agent sandbox starts in. The
+# launcher runs it as a Kubernetes Job under Pod Security "restricted": user
+# 1000, no privilege escalation, all capabilities dropped, an emptyDir at
+# /workspace. Nothing in it needs root at run time.
+#
+# A repository that needs more tools extends it:
+#
+#   FROM ghcr.io/autobutler-org/factory-worker:<version>
+#   USER root
+#   RUN apt-get update && apt-get install -y --no-install-recommends <packages> \
+#       && rm -rf /var/lib/apt/lists/*
+#   USER 1000:1000
+#
+# Keep the entrypoint. A repository will name its image in .factory/config.toml
+# (#11); until that is read, use the extension image by setting it as the
+# launcher's worker image.
+#
+# Build: make build/image/worker.
+
+# Tool versions, in one place. Renovate updates each ARG through the annotation
+# above it (customManagers:dockerfileVersions in renovate.json). Debian packages
+# (git, git-lfs, ssh, curl, jq, ripgrep, make, gcc, python3) are not pinned one
+# by one: they come from the pinned base image's release.
+# Go: keep in step with the go line of go.mod.
+# renovate: datasource=golang-version depName=go
+ARG GO_VERSION=1.27.4
+# renovate: datasource=node-version depName=node
+ARG NODE_VERSION=26.13.1
+# renovate: datasource=github-releases depName=cli/cli
+ARG GH_VERSION=2.105.0
+# renovate: datasource=npm depName=@anthropic-ai/claude-code
+ARG CLAUDE_CODE_VERSION=2.1.327
+
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS build
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=none
+ARG DATE=unknown
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath \
+    -ldflags "-X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE" \
+    -o /out/factory ./cmd/factory
+
+FROM debian:trixie-20261104-slim
+ARG TARGETARCH
+ARG GO_VERSION
+ARG NODE_VERSION
+ARG GH_VERSION
+ARG CLAUDE_CODE_VERSION
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl git git-lfs jq make openssh-client \
+        python3 python3-pip python3-venv ripgrep; \
+    rm -rf /var/lib/apt/lists/*; \
+    git lfs install --system
+
+# Go, Node.js, and gh from their official tarballs, each checked against the
+# vendor's published sha256.
+RUN set -eux; \
+    cd /tmp; \
+    go_tar="go${GO_VERSION}.linux-${TARGETARCH}.tar.gz"; \
+    curl -fsSLO "https://dl.google.com/go/${go_tar}"; \
+    echo "$(curl -fsSL "https://dl.google.com/go/${go_tar}.sha256")  ${go_tar}" | sha256sum -c -; \
+    tar -C /usr/local -xzf "${go_tar}"; \
+    case "${TARGETARCH}" in amd64) node_arch=x64 ;; arm64) node_arch=arm64 ;; *) echo "unsupported arch ${TARGETARCH}"; exit 1 ;; esac; \
+    node_tar="node-v${NODE_VERSION}-linux-${node_arch}.tar.gz"; \
+    curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/${node_tar}"; \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" | grep " ${node_tar}\$" | sha256sum -c -; \
+    mkdir /opt/node; \
+    tar -C /opt/node --strip-components=1 -xzf "${node_tar}"; \
+    gh_tar="gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz"; \
+    curl -fsSLO "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${gh_tar}"; \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_checksums.txt" | grep " ${gh_tar}\$" | sha256sum -c -; \
+    tar -xzf "${gh_tar}"; \
+    install -m 0755 "gh_${GH_VERSION}_linux_${TARGETARCH}/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/*
+
+RUN set -eux; \
+    groupadd --gid 1000 factory; \
+    useradd --uid 1000 --gid 1000 --create-home --home-dir /home/factory --shell /bin/bash factory; \
+    install -d -o 1000 -g 1000 /workspace
+
+USER 1000:1000
+ENV HOME=/home/factory \
+    GOPATH=/home/factory/go \
+    GOCACHE=/home/factory/.cache/go-build \
+    PATH=/home/factory/.local/bin:/home/factory/go/bin:/home/factory/.npm-global/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Claude Code from the official native installer, pinned, with updates off and
+# onboarding marked done for headless use. claude -p reads ANTHROPIC_API_KEY
+# from the environment at run time; no key is baked in.
+RUN set -eux; \
+    curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"; \
+    mkdir -p /home/factory/.claude; \
+    echo '{"hasCompletedOnboarding": true}' > /home/factory/.claude.json; \
+    echo '{"env": {"DISABLE_AUTOUPDATER": "1"}}' > /home/factory/.claude/settings.json; \
+    claude --version
+# Set only after the install: it also blocks the installer.
+ENV DISABLE_UPDATES=1
+
+# The worker runs its gate with only PATH and HOME set, so tool defaults must
+# already be right: Go's GOPATH and GOCACHE defaults under HOME match the ENV
+# above, and npm reads its global prefix from ~/.npmrc.
+RUN echo 'prefix=/home/factory/.npm-global' > /home/factory/.npmrc
+
+# Last, so a new commit rebuilds only this layer.
+COPY --from=build /out/factory /usr/local/bin/factory
+
+WORKDIR /workspace
+ENTRYPOINT ["factory"]
+CMD ["worker"]

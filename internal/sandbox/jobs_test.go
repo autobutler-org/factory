@@ -9,6 +9,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
@@ -21,6 +22,16 @@ var testConfig = JobsConfig{
 	ServiceAccountName: "factory-worker",
 	ServerURL:          "http://factory.factory.svc:8080",
 	RuntimeClassName:   "gvisor",
+	NodeSelector:       map[string]string{"factory.autobutler.org/workers": "true"},
+	Tolerations: []corev1.Toleration{{
+		Key: "factory.autobutler.org/workers", Operator: corev1.TolerationOpEqual, Value: "true", Effect: corev1.TaintEffectNoSchedule,
+	}},
+	Resources: corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceEphemeralStorage: resource.MustParse("10Gi")},
+		Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Gi")},
+	},
+	APITokenSecret: "factory-worker-api-token",
+	ModelKeySecret: "factory-model-api-key",
 }
 
 func newTestJobs(t *testing.T, objects ...any) (*Jobs, *fake.Clientset) {
@@ -77,11 +88,11 @@ func TestJobsEnsureCreatesWorkerJob(t *testing.T) {
 	t.Parallel()
 	j, client := newTestJobs(t)
 
-	sb, err := j.Ensure(t.Context(), "worker-a1")
+	sb, err := j.Ensure(t.Context(), "worker-a1", "item-1/o/r")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	if sb != (Sandbox{Name: "worker-a1", Phase: PhasePending}) {
+	if sb != (Sandbox{Name: "worker-a1", Key: "item-1/o/r", Phase: PhasePending}) {
 		t.Errorf("Ensure = %+v, want worker-a1 pending", sb)
 	}
 
@@ -99,6 +110,9 @@ func TestJobsEnsureCreatesWorkerJob(t *testing.T) {
 		t.Error("ttlSecondsAfterFinished is unset, want finished Jobs cleaned up")
 	}
 	pod := job.Spec.Template.Spec
+	if pod.TerminationGracePeriodSeconds == nil || *pod.TerminationGracePeriodSeconds < 30 {
+		t.Errorf("terminationGracePeriodSeconds = %v, want time to release the step", pod.TerminationGracePeriodSeconds)
+	}
 	if pod.RestartPolicy != corev1.RestartPolicyNever {
 		t.Errorf("restartPolicy = %q, want Never", pod.RestartPolicy)
 	}
@@ -124,18 +138,50 @@ func TestJobsEnsureCreatesWorkerJob(t *testing.T) {
 	env := map[string]string{}
 	for _, e := range c.Env {
 		env[e.Name] = e.Value
+		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
+			env[e.Name] = "secret:" + e.ValueFrom.SecretKeyRef.Name + "/" + e.ValueFrom.SecretKeyRef.Key
+		}
 	}
 	for k, want := range map[string]string{
-		"FACTORY_URL":        testConfig.ServerURL,
-		"FACTORY_SANDBOX":    "worker-a1",
-		"FACTORY_TOKEN_FILE": tokenDir + "/" + tokenFile,
+		"FACTORY_URL":         testConfig.ServerURL,
+		"FACTORY_SANDBOX":     "worker-a1",
+		"FACTORY_SANDBOX_KEY": "item-1/o/r",
+		"FACTORY_WORK_DIR":    WorkspaceDir,
+		"FACTORY_HARNESSES":   "claude-code",
+		"FACTORY_TOKEN_FILE":  "",
+		"FACTORY_API_TOKEN":   "secret:factory-worker-api-token/token",
+		"ANTHROPIC_API_KEY":   "secret:factory-model-api-key/api-key",
 	} {
 		if env[k] != want {
 			t.Errorf("env %s = %q, want %q", k, env[k], want)
 		}
 	}
-	if len(pod.Volumes) != 1 || pod.Volumes[0].Projected == nil {
-		t.Fatalf("volumes = %+v, want one projected token volume", pod.Volumes)
+	if job.Annotations[annotationKey] != "item-1/o/r" {
+		t.Errorf("annotations = %v, want the sandbox key under %s", job.Annotations, annotationKey)
+	}
+	if pod.NodeSelector["factory.autobutler.org/workers"] != "true" || len(pod.Tolerations) != 1 {
+		t.Errorf("nodeSelector = %v, tolerations = %v, want the configured ones", pod.NodeSelector, pod.Tolerations)
+	}
+	if q := c.Resources.Requests[corev1.ResourceEphemeralStorage]; q.String() != "10Gi" {
+		t.Errorf("ephemeral-storage request = %s, want 10Gi", q.String())
+	}
+	// Pod Security "restricted" admits only pods like this.
+	psc, sc := pod.SecurityContext, c.SecurityContext
+	if psc == nil || psc.RunAsNonRoot == nil || !*psc.RunAsNonRoot || psc.SeccompProfile == nil || psc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Errorf("pod securityContext = %+v, want runAsNonRoot and RuntimeDefault seccomp", psc)
+	}
+	if sc == nil || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation || sc.Capabilities == nil || len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
+		t.Errorf("container securityContext = %+v, want no privilege escalation and every capability dropped", sc)
+	}
+	mounts := map[string]string{}
+	for _, m := range c.VolumeMounts {
+		mounts[m.Name] = m.MountPath
+	}
+	if mounts[tokenVolume] != tokenDir || mounts[workspaceVolume] != WorkspaceDir {
+		t.Errorf("mounts = %v, want the token at %s and the workspace at %s", mounts, tokenDir, WorkspaceDir)
+	}
+	if len(pod.Volumes) != 2 || pod.Volumes[0].Projected == nil || pod.Volumes[1].EmptyDir == nil {
+		t.Fatalf("volumes = %+v, want the projected token and an emptyDir workspace", pod.Volumes)
 	}
 	tok := pod.Volumes[0].Projected.Sources[0].ServiceAccountToken
 	if tok == nil || tok.Audience != tokenAudience || tok.Path != tokenFile {
@@ -151,7 +197,7 @@ func TestJobsEnsureLeavesExistingJob(t *testing.T) {
 	}
 	j, _ := newTestJobs(t, existing)
 
-	sb, err := j.Ensure(t.Context(), "worker-a1")
+	sb, err := j.Ensure(t.Context(), "worker-a1", "item-1/o/r")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -163,7 +209,7 @@ func TestJobsEnsureLeavesExistingJob(t *testing.T) {
 func TestJobsEnsureRejectsEmptyName(t *testing.T) {
 	t.Parallel()
 	j, _ := newTestJobs(t)
-	if _, err := j.Ensure(t.Context(), ""); err == nil {
+	if _, err := j.Ensure(t.Context(), "", "k"); err == nil {
 		t.Error("Ensure(\"\") succeeded, want an error")
 	}
 }
@@ -215,7 +261,9 @@ func TestJobsStatusNotFound(t *testing.T) {
 func TestJobsListOnlyFactoryJobs(t *testing.T) {
 	t.Parallel()
 	mine := func(name string) *batchv1.Job {
-		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "factory-workers", Labels: workerLabels()}}
+		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: "factory-workers", Labels: workerLabels(), Annotations: map[string]string{annotationKey: "i/" + name},
+		}}
 	}
 	other := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "factory-workers"}}
 	j, _ := newTestJobs(t, mine("w2"), other, mine("w1"))
@@ -224,8 +272,8 @@ func TestJobsListOnlyFactoryJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(list) != 2 || list[0].Name != "w1" || list[1].Name != "w2" {
-		t.Errorf("List = %+v, want w1 and w2 only, in name order", list)
+	if len(list) != 2 || list[0] != (Sandbox{Name: "w1", Key: "i/w1", Phase: PhasePending}) || list[1].Name != "w2" {
+		t.Errorf("List = %+v, want w1 and w2 only, in name order, with their keys", list)
 	}
 }
 

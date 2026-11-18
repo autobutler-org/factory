@@ -1,33 +1,40 @@
 package sandbox
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestReconcile(t *testing.T) {
 	t.Parallel()
+	running := func(name, key string) Sandbox { return Sandbox{Name: name, Key: key, Phase: PhaseRunning} }
+	pending := func(name, key string) Sandbox { return Sandbox{Name: name, Key: key, Phase: PhasePending} }
+	ended := func(name, key string, p Phase) Sandbox { return Sandbox{Name: name, Key: key, Phase: p} }
 	tests := []struct {
-		name string
-		in   Counts
-		want Plan
+		name     string
+		live     []Sandbox
+		runnable []string
+		max      int
+		want     Plan
 	}{
-		{"nothing to do", Counts{}, Plan{}},
-		{"ready work, no sandboxes", Counts{Ready: 3, Max: 5}, Plan{Start: 3}},
-		{"ready work capped by max", Counts{Ready: 10, Max: 4}, Plan{Start: 4}},
-		{"busy sandboxes use up the cap", Counts{Ready: 5, Busy: 3, Max: 4}, Plan{Start: 1}},
-		{"idle sandboxes already cover ready work", Counts{Ready: 2, Idle: 2, Max: 5}, Plan{}},
-		{"idle sandboxes cover part of ready work", Counts{Ready: 3, Idle: 1, Max: 5}, Plan{Start: 2}},
-		{"surplus idle sandboxes stop", Counts{Ready: 1, Idle: 3, Max: 5}, Plan{Stop: 2}},
-		{"no ready work stops every idle sandbox", Counts{Busy: 2, Idle: 2, Max: 5}, Plan{Stop: 2}},
-		{"at the cap, nothing starts", Counts{Ready: 4, Busy: 2, Idle: 2, Max: 4}, Plan{}},
-		{"over the cap after max was lowered stops idle first", Counts{Ready: 3, Busy: 1, Idle: 3, Max: 2}, Plan{Stop: 2}},
-		{"over the cap with only busy sandboxes stops nothing", Counts{Ready: 1, Busy: 4, Max: 2}, Plan{}},
-		{"zero max starts nothing and stops idle", Counts{Ready: 2, Idle: 1}, Plan{Stop: 1}},
-		{"negative counts are treated as zero", Counts{Ready: -1, Busy: -2, Idle: -3, Max: -4}, Plan{}},
+		{"nothing to do", nil, nil, 4, Plan{Free: 4}},
+		{"each runnable chain gets a sandbox", nil, []string{"i/a", "i/b"}, 4, Plan{Start: []string{"i/a", "i/b"}, Free: 2}},
+		{"starts are capped by max, in the order given", nil, []string{"i/a", "i/b", "i/c"}, 2, Plan{Start: []string{"i/a", "i/b"}}},
+		{"a chain with a live sandbox gets no second one", []Sandbox{pending("w1", "i/a")}, []string{"i/a", "i/b"}, 4, Plan{Start: []string{"i/b"}, Free: 2}},
+		{"a repeated key starts once", nil, []string{"i/a", "i/a"}, 4, Plan{Start: []string{"i/a"}, Free: 3}},
+		{"ended sandboxes do not count", []Sandbox{ended("w1", "i/a", PhaseSucceeded), ended("w2", "i/b", PhaseFailed)}, []string{"i/a"}, 1, Plan{Start: []string{"i/a"}}},
+		{"a live sandbox whose chain has nothing runnable may stop", []Sandbox{running("w1", "i/a"), running("w2", "i/b")}, []string{"i/b"}, 4, Plan{Stop: []Sandbox{running("w1", "i/a")}, Free: 2}},
+		{"live sandboxes use up the cap", []Sandbox{running("w1", "i/a"), running("w2", "i/b")}, []string{"i/a", "i/b", "i/c"}, 2, Plan{}},
+		{"over the cap starts nothing", []Sandbox{running("w1", "i/a"), running("w2", "i/b"), running("w3", "i/c")}, []string{"i/a", "i/b", "i/c", "i/d"}, 2, Plan{}},
+		{"a sandbox without a key counts but never stops", []Sandbox{running("other", "")}, nil, 2, Plan{Free: 1}},
+		{"zero max starts nothing", nil, []string{"i/a"}, 0, Plan{}},
+		{"negative max is zero", nil, []string{"i/a"}, -1, Plan{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := Reconcile(tt.in); got != tt.want {
-				t.Errorf("Reconcile(%+v) = %+v, want %+v", tt.in, got, tt.want)
+			if got := Reconcile(tt.live, tt.runnable, tt.max); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Reconcile = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

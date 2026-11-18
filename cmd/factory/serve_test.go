@@ -32,6 +32,13 @@ func TestServeRefusesBeforeListening(t *testing.T) {
 		{name: "no database", args: nil, wantCode: 1, wantStderr: db.ErrNoDatabaseURL.Error()},
 		{name: "app id without a key", args: []string{"--github-app-id", "12345"}, wantCode: 2, wantStderr: "--github-app-key-file"},
 		{name: "key without an app id", args: []string{"--github-app-key-file", "app.pem"}, wantCode: 2, wantStderr: "--github-app-id"},
+		{name: "launcher without an image", args: []string{"--launcher", "--launcher-server-url", "http://f:8080"}, wantCode: 2, wantStderr: "--launcher-image"},
+		{name: "launcher without a server URL", args: []string{"--launcher", "--launcher-image", "w:1"}, wantCode: 2, wantStderr: "--launcher-server-url"},
+		{name: "launcher with no room", args: []string{"--launcher", "--launcher-image", "w:1", "--launcher-server-url", "http://f:8080", "--launcher-max-sandboxes", "0"}, wantCode: 2, wantStderr: "--launcher-max-sandboxes"},
+		{name: "bad toleration", args: []string{"--launcher-tolerations", "a=b"}, wantCode: 2, wantStderr: "--launcher-tolerations"},
+		{name: "bad resources", args: []string{"--launcher-limits", "gpu=1"}, wantCode: 2, wantStderr: "--launcher-limits"},
+		{name: "bad node selector", args: []string{"--launcher-node-selector", "novalue"}, wantCode: 2, wantStderr: "--launcher-node-selector"},
+		{name: "launcher outside a cluster", args: []string{"--launcher", "--launcher-image", "w:1", "--launcher-server-url", "http://f:8080"}, wantCode: 1, wantStderr: "--launcher=false"},
 		{name: "missing key file", args: []string{"--github-app-id", "1", "--github-app-key-file", "/nonexistent/app.pem"}, wantCode: 1, wantStderr: "/nonexistent/app.pem"},
 	}
 	for _, tt := range tests {
