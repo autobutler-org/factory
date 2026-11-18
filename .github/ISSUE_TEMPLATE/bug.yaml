@@ -1,0 +1,30 @@
+name: Bug report
+description: Report something factory does wrong.
+labels:
+  - bug
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you saw and what you expected instead. Name the command, server endpoint, worker, or adapter involved.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The steps, commands, or requests that show the problem.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `factory version`.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Remove any token or credential first. This is rendered as code, so no backticks are needed.
+      render: shell

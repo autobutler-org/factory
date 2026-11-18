@@ -1,0 +1,35 @@
+name: Epic
+description: Track a large goal that splits into several issues.
+title: "epic: "
+labels:
+  - epic
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: The outcome this epic delivers, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: child-issues
+    attributes:
+      label: Child issues
+      description: One issue per line, each small enough for one pull request. Link existing issues and describe the ones not yet filed.
+      placeholder: |
+        - [ ] #123 add the claim endpoint
+        - [ ] show claimed work in the web UI
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What this epic does not include, so later work is not pulled in.
+  - type: textarea
+    id: done
+    attributes:
+      label: How to tell it is done
+      description: The behavior that must be true once every child issue has merged.
+    validations:
+      required: true
