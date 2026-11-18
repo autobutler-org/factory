@@ -18,6 +18,21 @@ wins over the environment.
 | `--github-app-key-file` | `FACTORY_GITHUB_APP_KEY_FILE` | unset | Path to the App's PEM private key. Read once at startup and never logged. |
 | `--github-api-url` | `FACTORY_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL; for GitHub Enterprise, `https://<host>/api/v3`. |
 | none | `FACTORY_API_TOKEN` | unset | Bearer token required on every `/api/v1` route. Environment only, so it does not show up in process listings. |
+| `--launcher` | `FACTORY_LAUNCHER` | `false` | Run the launcher: start worker sandboxes as Kubernetes Jobs and run server-side steps (`merge`). Needs in-cluster config. |
+| `--launcher-namespace` | `FACTORY_LAUNCHER_NAMESPACE` | `factory-workers` | Namespace the worker Jobs run in. |
+| `--launcher-image` | `FACTORY_LAUNCHER_IMAGE` | none, required with `--launcher` | Worker image. |
+| `--launcher-server-url` | `FACTORY_LAUNCHER_SERVER_URL` | none, required with `--launcher` | URL workers reach this server at, such as `http://factory.factory.svc.cluster.local:80`. |
+| `--launcher-max-sandboxes` | `FACTORY_LAUNCHER_MAX_SANDBOXES` | `4` | Most worker sandboxes alive at once. Keep the worker namespace's ResourceQuota in step. |
+| `--launcher-pending-timeout` | `FACTORY_LAUNCHER_PENDING_TIMEOUT` | `10m` | Destroy a worker sandbox still pending after this long (an image that will not pull, a pod that cannot be scheduled), with a logged reason, so it stops holding a slot; its chain gets a new one. `0` never does. |
+| `--launcher-capabilities` | `FACTORY_LAUNCHER_CAPABILITIES` | `claude-code` | Comma-separated capabilities the worker image registers. Items that require anything else are neither planned nor given a sandbox. |
+| `--launcher-service-account` | `FACTORY_LAUNCHER_SERVICE_ACCOUNT` | `factory-worker` | ServiceAccount of worker pods. |
+| `--launcher-node-selector` | `FACTORY_LAUNCHER_NODE_SELECTOR` | unset | `key=value,...` node selector for worker pods. |
+| `--launcher-tolerations` | `FACTORY_LAUNCHER_TOLERATIONS` | unset | Tolerations for worker pods: `key=value:Effect` (operator Equal) or `key:Effect` (operator Exists), comma-separated. |
+| `--launcher-requests` | `FACTORY_LAUNCHER_REQUESTS` | `cpu=1,memory=2Gi,ephemeral-storage=10Gi` | Worker container requests. Only `cpu`, `memory` and `ephemeral-storage`. |
+| `--launcher-limits` | `FACTORY_LAUNCHER_LIMITS` | `cpu=4,memory=8Gi,ephemeral-storage=20Gi` | Worker container limits. |
+| `--launcher-api-token-secret` | `FACTORY_LAUNCHER_API_TOKEN_SECRET` | `factory-worker-api-token` | Secret in the worker namespace whose key `token` workers get as `FACTORY_API_TOKEN`. |
+| `--launcher-model-key-secret` | `FACTORY_LAUNCHER_MODEL_KEY_SECRET` | `factory-model-api-key` | Secret in the worker namespace whose key `api-key` workers get as `ANTHROPIC_API_KEY`. |
+| `--launcher-runtime-class` | `FACTORY_LAUNCHER_RUNTIME_CLASS` | unset | RuntimeClass of worker pods, such as `gvisor`. |
 
 When `FACTORY_API_TOKEN` is unset the API is unauthenticated. The server then refuses any `--addr` that is not a
 loopback address, and logs a warning at startup that it is bound to loopback only. This is a stopgap: one
@@ -25,6 +40,12 @@ shared token and no caller identities. Sign-in, roles and scoped tokens arrive w
 
 Without a GitHub App, `POST /api/v1/work/{id}/codehost-token` answers `503 codehost_not_configured`. The token flow
 is in [architecture/codehost.md](architecture/codehost.md#tokens).
+
+With `--launcher` off (the default) the server starts no sandboxes and runs no steps itself; it behaves as it did
+before the launcher existed. With it on, the server needs a ServiceAccount allowed to manage Jobs in the worker
+namespace, and server-side steps run only when a GitHub App is configured; without one the server logs a warning at
+startup and `merge` steps stay `ready`. The launcher and what a worker receives are described in
+[architecture/workers.md](architecture/workers.md#the-launcher); deploying it is [operations.md](operations.md).
 
 Durations use Go's syntax: `90s`, `5m`, `3h`. The lease settings are explained in
 [architecture/workers.md](architecture/workers.md).

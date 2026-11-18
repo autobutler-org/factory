@@ -1,0 +1,104 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- if .Values.networkPolicy.cilium }}
+# Worker pods: no ingress; egress to DNS, this release's server pods, and HTTPS to the listed hosts only.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: factory-worker
+  namespace: {{ .Values.workers.namespace }}
+  labels:
+    {{- include "factory.workerLabels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: factory-worker
+  # An empty ingress rule puts the pods in ingress default deny and allows nothing.
+  ingress:
+    - {}
+  egress:
+    # toFQDNs needs Cilium's DNS proxy to see the lookups, hence the dns rule.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            {{- include "factory.selectorLabels" . | nindent 12 }}
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    - toFQDNs:
+        {{- range .Values.workers.egress.fqdns }}
+        {{- if contains "*" . }}
+        - matchPattern: {{ . | quote }}
+        {{- else }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+{{- else }}
+# Worker pods: no ingress; egress to DNS, this release's server pods, and any non-private address on 443.
+# Plain NetworkPolicy cannot match hostnames; networkPolicy.cilium narrows 443 to the listed hosts.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: factory-worker
+  namespace: {{ .Values.workers.namespace }}
+  labels:
+    {{- include "factory.workerLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: factory-worker
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "factory.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            {{- with .Values.workers.egress.denyCidrs }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        - port: 443
+          protocol: TCP
+{{- end }}
+{{- end }}

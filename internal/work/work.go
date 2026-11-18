@@ -5,7 +5,11 @@
 //
 // It also stores each item's step graph (planned by internal/plan), leases
 // steps to workers, schedules the steps that follow, and derives the item's
-// state from its graph. See docs/architecture/graph.md.
+// state from its graph. See docs/architecture/graph.md. For the server's
+// launcher it plans ready items (StartReady), lists the chains that need a
+// sandbox (RunnableSandboxes), ends a sandbox only when its chain is done
+// (EndIdleSandbox), and hands the server the steps that need no sandbox
+// (ClaimServerStep).
 //
 // It does not speak HTTP or parse flags, and it does not decide who may call
 // it; callers pass an Actor that is recorded on each event. See

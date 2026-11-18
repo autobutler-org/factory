@@ -393,6 +393,37 @@ func (q *Queries) ListSteps(ctx context.Context, graphID string) ([]WorkStep, er
 	return items, nil
 }
 
+const pickServerStep = `-- name: PickServerStep :one
+SELECT s.id, w.id AS work_item_id FROM work_steps s
+JOIN work_graphs g ON g.id = s.graph_id AND g.state = 'current'
+JOIN work_items w ON w.id = g.work_item_id
+WHERE s.state = 'ready'
+  AND s.available_at <= now()
+  AND s.sandbox_key = ''
+  AND NOT (s.kind = ANY ($1::text[]))
+  AND w.state IN ('in_progress', 'in_review')
+  AND w.claimed_by IS NULL
+ORDER BY w.priority DESC, w.created_at, w.id, s.position
+LIMIT 1
+FOR UPDATE OF w SKIP LOCKED
+`
+
+type PickServerStepRow struct {
+	ID         string `json:"id"`
+	WorkItemID string `json:"work_item_id"`
+}
+
+// The next step the server runs itself: one with no sandbox that is not a
+// wait step (merge), ready and available, in the current graph of an item
+// being worked by the step protocol. Capabilities do not apply: the server
+// needs none of the item's requirements to merge.
+func (q *Queries) PickServerStep(ctx context.Context, waitKinds []string) (PickServerStepRow, error) {
+	row := q.db.QueryRow(ctx, pickServerStep, waitKinds)
+	var i PickServerStepRow
+	err := row.Scan(&i.ID, &i.WorkItemID)
+	return i, err
+}
+
 const pickStep = `-- name: PickStep :one
 SELECT s.id, w.id AS work_item_id FROM work_steps s
 JOIN work_graphs g ON g.id = s.graph_id AND g.state = 'current'
@@ -480,6 +511,52 @@ func (q *Queries) ReturnStep(ctx context.Context, arg ReturnStepParams) (WorkSte
 		&i.FinishedAt,
 	)
 	return i, err
+}
+
+const runnableSandboxes = `-- name: RunnableSandboxes :many
+SELECT s.sandbox_key FROM work_steps s
+JOIN work_graphs g ON g.id = s.graph_id AND g.state = 'current'
+JOIN work_items w ON w.id = g.work_item_id
+WHERE s.state = 'ready'
+  AND s.available_at <= now()
+  AND s.sandbox_key <> ''
+  AND NOT (s.kind = ANY ($1::text[]))
+  AND w.state IN ('in_progress', 'in_review')
+  AND w.claimed_by IS NULL
+  AND w.requires <@ $2::text[]
+  AND NOT EXISTS (
+      SELECT 1 FROM work_steps r WHERE r.state = 'running' AND r.sandbox_key = s.sandbox_key)
+GROUP BY s.sandbox_key
+ORDER BY max(w.priority) DESC, min(w.created_at), s.sandbox_key
+`
+
+type RunnableSandboxesParams struct {
+	WaitKinds    []string `json:"wait_kinds"`
+	Capabilities []string `json:"capabilities"`
+}
+
+// The sandbox keys of chains with a step a sandboxed worker could claim now:
+// ready and available, not a wait step, in the current graph of an item
+// being worked by the step protocol whose requirements the launched workers
+// meet, and no step of the chain running. Highest-priority item first.
+func (q *Queries) RunnableSandboxes(ctx context.Context, arg RunnableSandboxesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, runnableSandboxes, arg.WaitKinds, arg.Capabilities)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var sandbox_key string
+		if err := rows.Scan(&sandbox_key); err != nil {
+			return nil, err
+		}
+		items = append(items, sandbox_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setStepClaim = `-- name: SetStepClaim :one
@@ -642,4 +719,16 @@ func (q *Queries) StuckSteps(ctx context.Context, arg StuckStepsParams) ([]strin
 		return nil, err
 	}
 	return items, nil
+}
+
+const unfinishedSandboxSteps = `-- name: UnfinishedSandboxSteps :one
+SELECT count(*) FROM work_steps WHERE sandbox_key = $1 AND state IN ('pending', 'ready', 'running')
+`
+
+// How many steps of a chain can still run: pending, ready or running.
+func (q *Queries) UnfinishedSandboxSteps(ctx context.Context, sandboxKey string) (int64, error) {
+	row := q.db.QueryRow(ctx, unfinishedSandboxSteps, sandboxKey)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }

@@ -152,6 +152,65 @@ out gets `409 lease_expired`, a repository the claim does not cover (such as ano
 gets `403 repo_not_allowed`, and a server without a GitHub App gets `503 codehost_not_configured`. See
 [codehost.md](codehost.md#tokens).
 
+## The launcher
+
+In the cluster, `factory serve --launcher` starts the workers (`internal/launcher`). Every 10 seconds, one replica at
+a time (a Postgres advisory lock), it:
+
+1. **Runs server-side steps.** A step with no sandbox key that is not a wait step (today only `merge`) is never
+   handed to a sandbox. The server claims it through the step protocol as its own worker, `factory-server`
+   (`work.Service.ClaimServerStep`), runs it with the code host and reports the result with
+   `ReportStepResult`, so it writes the same `step_claimed` and `step_result_reported` events, counts attempts and
+   retries the same way, and an expired lease returns it to `ready`. Merge reads the item's newest pull request
+   output for the step's repository: already `merged` succeeds at once; `closed`, or none, fails without retry.
+   Otherwise it asks the code host: a pull request already merged there succeeds and is recorded `merged`; when the
+   base branch has a merge queue it enqueues it and succeeds with `{"merged": false, "queued": true}`, leaving the
+   output open for the adapter (#7) to record when the queue lands it; otherwise it merges and records the output
+   `merged`. A code host error is a retryable failure. Without a GitHub App this step is skipped, with a warning
+   at startup, and `merge` steps stay `ready`.
+2. **Plans ready items** while there is room under `--launcher-max-sandboxes` (`work.Service.StartReady`), whose
+   requirements are all in `--launcher-capabilities`. A sandbox's worker claims only its own chain and never plans
+   an item, so the server does it. The `planned` event and the move to `in_progress` are recorded with the actor
+   `system/launcher`.
+3. **Starts one sandbox per chain** (`sandbox.Reconcile`): every sandbox key with a ready, available, non-wait step
+   and no running step (`work.Service.RunnableSandboxes`) that has no live (pending or running) sandbox gets a new
+   Job named `worker-<12 random characters>`, up to the cap, highest-priority item first. A chain waiting on an event
+   or a retry delay gets none.
+4. **Stops a live sandbox only when its chain has nothing left**: no step of its sandbox key is pending, ready or
+   running (`work.Service.EndIdleSandbox`). The check and the Job's deletion happen under the item's row lock, which
+   every claim takes, so a sandbox whose worker holds a step is never stopped. Normally the worker has exited
+   already; this cleans up after one that hangs. A sandbox still pending after `--launcher-pending-timeout`
+   (default 10 minutes: an image that will not pull, a pod that cannot be scheduled) is destroyed with a logged
+   warning, since its worker never started and holds no step; its chain gets a new sandbox in the same pass.
+
+Ended Jobs are left for Kubernetes to delete an hour after they finish (`ttlSecondsAfterFinished`), so their logs
+stay readable; they do not count against the cap.
+
+### What a worker sandbox receives
+
+The worker (`factory worker`, #11) runs as the container's command `factory worker`. Its environment:
+
+| Variable | Value |
+| --- | --- |
+| `FACTORY_URL` | `--launcher-server-url`, the server's in-cluster URL |
+| `FACTORY_SANDBOX` | The Job's name, `worker-...`: the name the worker registers under |
+| `FACTORY_SANDBOX_KEY` | The chain's sandbox key, `<item id>/<repo>`. The worker sends it as `sandbox_key` on every claim and exits 0 when a claim returns `204`. |
+| `FACTORY_WORK_DIR` | `/workspace`, the emptyDir for checkouts |
+| `FACTORY_HARNESSES` | `claude-code`, the only agent CLI the worker image installs |
+| `FACTORY_API_TOKEN` | The bearer token, from key `token` of the Secret `--launcher-api-token-secret` in the worker namespace |
+| `ANTHROPIC_API_KEY` | The model API key, from key `api-key` of the Secret `--launcher-model-key-secret` |
+
+`FACTORY_TOKEN_FILE` is not set: the worker would send that file as its bearer token in place of
+`FACTORY_API_TOKEN`, and the server does not accept a ServiceAccount token until #15. The projected token is mounted
+at `/var/run/factory/token` (audience `factory`) for #15 to use. On `SIGTERM` the worker releases its step; the pod's
+termination grace period is 60 seconds.
+
+Files: `/var/run/factory/token` (read-only), and an `emptyDir` at `/workspace`, writable, for clones (its size counts against the ephemeral-storage limit). The image's
+user is uid 1000 with a writable home, `/home/factory`. The pod runs with no Kubernetes API token, as non-root,
+with no privilege escalation and every capability dropped, with the configured node selector, tolerations,
+requests and limits (ephemeral storage included). The Job has `backoffLimit: 0`: a worker that dies is not
+restarted; its step returns to `ready` and the next pass starts a fresh sandbox for the chain.
+
 ## The item protocol (local claims)
 
 ```mermaid

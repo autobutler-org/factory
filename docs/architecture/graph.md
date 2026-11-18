@@ -56,8 +56,9 @@ keys; `inputs_hash` is the SHA-256 of the item's ID, title and repositories, eac
 - Dependencies between items (`work_dependencies`) stay at the item level: an item is not planned until every item
   it is blocked by is finished.
 
-Planning happens when an item is taken from `ready`: the first step claim that finds no planned step ready takes the
-next ready item, plans it, records a `planned` event, and moves the item to `in_progress`. Taking an item from
+Planning happens when an item is taken from `ready`: the first unrestricted step claim that finds no planned step
+ready, or the server's launcher when it has room for more sandboxes ([workers.md](workers.md#the-launcher)), takes
+the next ready item, plans it, records a `planned` event, and moves the item to `in_progress`. Taking an item from
 `ready` always plans a new graph version; the previous one, if any, was canceled when the item left
 `in_progress`. An item that cannot be planned (for example, one that names no repository) goes to `blocked` with
 the reason.
@@ -139,6 +140,9 @@ Workers claim steps, not items; see [workers.md](workers.md#the-step-protocol) f
   so a sandbox started for one chain takes only that chain's steps. A chain gives its sandbox up when it reaches a
   wait step. When the chain continues, a new sandbox gets the next step, not `workspace`, so the worker must
   re-create the working tree from the pushed branch, which the claim's `results` name (`workspace`'s `branch`).
+- **Steps with no sandbox run in the server.** `merge` has no sandbox key, so a sandbox's worker never claims it.
+  The server's launcher claims it through the same protocol and merges with the code host
+  ([workers.md](workers.md#the-launcher)).
 - **Wait steps hold no sandbox.** `await_checks` and `await_approval` are never handed to a worker. An adapter (#7)
   completes them with `POST /api/v1/steps/{id}/complete` when the event arrives.
 - **Leases, retries, stuck detection** are #6's, per step: an expired lease returns only that step to `ready` with
@@ -151,7 +155,7 @@ The item's state follows the graph, through the state machine in [work.md](work.
 
 | When | Item moves to |
 | --- | --- |
-| The first step of a new graph is claimed (the item is taken from `ready`) | `in_progress` |
+| The item is taken from `ready` and planned, by a claim or by the launcher | `in_progress` |
 | No `open_pr` step is left to run (the item has nothing more to produce, #4's `outputs_done`) | `in_review` while an output is open; `completed` if all have landed |
 | Every step has succeeded or been skipped, and every output has landed | `completed` |
 | A step fails for good: attempts exhausted, not retryable, or a last round without a pass | `failed`, with the step and reason |
@@ -178,7 +182,6 @@ their next heartbeat. Steps of the new graph run from the start, which is safe b
 
 - The `decompose` kind, an agent step that proposes how to split a large item into a replan.
 - The UI's graph view (#14) and one telemetry span per step (#13).
-- Feeding `.factory/config.toml` (parsed by `internal/repoconfig`) to the planner, and starting sandboxes per chain
-  from `internal/sandbox`.
+- Feeding `.factory/config.toml` (parsed by `internal/repoconfig`) to the planner.
 - A wait step only accepts its event while it is `ready`. An adapter that sees checks finish before the chain reaches
   `await_checks` must check the current status when the step becomes ready (#7).

@@ -1,0 +1,48 @@
+# What the server needs in the worker namespace. The namespace itself, its Pod Security level and its
+# ResourceQuota belong to the cluster. The worker Jobs are created by the server, not by this chart.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.workers.serviceAccountName }}
+  namespace: {{ .Values.workers.namespace }}
+  labels:
+    {{- include "factory.workerLabels" . | nindent 4 }}
+# Workers have no Kubernetes API access: no RoleBindings and no token.
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "factory.fullname" . }}-launcher
+  namespace: {{ .Values.workers.namespace }}
+  labels:
+    {{- include "factory.workerLabels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "factory.fullname" . }}-launcher
+  namespace: {{ .Values.workers.namespace }}
+  labels:
+    {{- include "factory.workerLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "factory.fullname" . }}-launcher
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "factory.fullname" . }}
+    namespace: {{ .Release.Namespace }}

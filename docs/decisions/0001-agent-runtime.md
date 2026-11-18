@@ -54,21 +54,27 @@ claims through the protocol, as #6 and #11 describe.
 
 ### Who creates sandboxes, and when
 
-The factory server, on a timer (every 10 seconds is a reasonable start), calls `sandbox.Reconcile`:
+The factory server's launcher (`internal/launcher`, turned on with `factory serve --launcher`), on a 10-second timer.
+The step graph (#24) changed the unit from one sandbox per item to one sandbox per **chain**: the steps of one item
+and repository that share a working tree and its sandbox key, `<item id>/<repo>`. So `Reconcile` no longer counts
+ready items against idle and busy sandboxes; it takes the live sandboxes (each tagged with its key) and the keys of
+the chains with a runnable step, and returns which keys get a new sandbox, under the cap, and which live sandboxes
+are stop candidates:
 
 ```go
-ready := store.CountReady(ctx)                       // work_items in ready
-live := liveSandboxes(rt.List(ctx))                  // Pending or Running
-busy, idle := splitByClaim(live, registry)           // join on FACTORY_SANDBOX
-plan := sandbox.Reconcile(sandbox.Counts{Ready: ready, Busy: busy, Idle: idle, Max: cfg.MaxWorkers})
-for range plan.Start { rt.Ensure(ctx, "worker-"+randomSuffix()) }
-for _, s := range pickIdle(idle, plan.Stop) { rt.Destroy(ctx, s.Name) }
+runnable := svc.RunnableSandboxes(ctx, caps)            // keys with a ready, non-wait step and none running
+plan := sandbox.Reconcile(rt.List(ctx), runnable, max)  // Start: keys; Stop: candidates; Free: room left
+svc.StartReady(ctx, caps, plan.Free)                    // a sandbox never plans an item, so the server does
+for _, key := range plan.Start { rt.Ensure(ctx, "worker-"+random(), key) }
+for _, sb := range plan.Stop { svc.EndIdleSandbox(ctx, sb.Key, destroy(sb.Name)) } // only if nothing is left
 ```
 
-`Reconcile` starts enough sandboxes that every ready item has an idle one to claim it, never goes above the maximum,
-and stops only idle sandboxes (ones whose worker holds no claim, including ones still starting). A busy sandbox is
-never stopped by reconcile; it exits when its item is done. Each worker is told its sandbox name in
-`FACTORY_SANDBOX` and sends it when it registers (#6), which is how the server joins a sandbox to a worker and an item.
+The same pass runs the steps that need no sandbox (`merge`) in the server, through the step protocol. One replica
+passes at a time, under a Postgres advisory lock. A sandbox is stopped only when its chain has no pending, ready or
+running step, checked under the item's row lock while the Job is deleted, so a busy sandbox is never stopped; the
+worker normally exits on its own first, when a claim restricted to its key returns nothing. The worker is told its
+Job name in `FACTORY_SANDBOX`, which it registers under, and its key in `FACTORY_SANDBOX_KEY`. The full environment, and the launcher's rules, are in
+[workers.md](../architecture/workers.md#the-launcher).
 
 Destroying a sandbox deletes its Job, which sends the worker `SIGTERM`. #11 already says the worker releases its item
 on `SIGTERM` without counting an attempt.
@@ -95,11 +101,16 @@ transport of its own.
   worker over the protocol. Nothing is configured in the pod.
 - **Model API key:** a Kubernetes Secret in the worker namespace, injected into the worker container. The worker
   passes it to the agent session only, never to the gate (#11's environment scrubbing).
+- **As built for the MVP (#17):** until #15 verifies the projected token, the worker gets the shared API bearer
+  token as `FACTORY_API_TOKEN` from a Secret in the worker namespace (`factory-worker-api-token`, key `token`), and
+  no `FACTORY_TOKEN_FILE`, which the worker would prefer. The model key is `ANTHROPIC_API_KEY`, from
+  `factory-model-api-key`, key `api-key`.
 
 ### The worker image
 
-Not added here. It needs git, the agent CLIs, and the factory binary, and #11 builds it. The Job only needs its
-digest-pinned reference.
+`Dockerfile.worker`, published as `ghcr.io/autobutler-org/factory-worker` (#17): the agent dev container with git,
+the build toolchains, Claude Code and the factory binary as its entrypoint, running as uid 1000. The pod runs under
+Pod Security `restricted`: non-root, no privilege escalation, every capability dropped, RuntimeDefault seccomp.
 
 ## Answers to the questions in #9
 
@@ -264,9 +275,11 @@ pulls about 570 MB of images and builds every component. So these remain unprove
 
 `internal/sandbox`:
 
-- `Runtime`: `Ensure`, `Status`, `List`, `Destroy`, `Exec`.
+- `Runtime`: `Ensure`, `Status`, `List`, `Destroy`, `Exec`. A sandbox carries the sandbox key of the chain it
+  serves (on the Job as the annotation `factory.autobutler.org/sandbox-key`).
 - `Fake`: an in-memory runtime for server tests.
 - `Jobs`: the Kubernetes Job runtime, using client-go.
-- `Reconcile`: the pure start-and-stop decision, with table tests.
+- `Reconcile`: the pure start-and-stop decision per chain, with table tests.
 
-Nothing calls it yet; the server code it plugs into does not exist on this branch. #11 wires it as described above.
+`internal/launcher` runs it from `factory serve --launcher` as described above; `deploy/chart` deploys the server,
+its Role in the worker namespace, the `factory-worker` ServiceAccount and the worker network policy (#17).

@@ -1,0 +1,16 @@
+{{- if .Values.metrics.podMonitor.enabled }}
+# Azure managed Prometheus. The server has no /metrics endpoint yet (#13).
+apiVersion: azmonitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "factory.fullname" . }}
+  labels:
+    {{- include "factory.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "factory.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+{{- end }}

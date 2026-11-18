@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "factory.fullname" . }}
+  labels:
+    {{- include "factory.labels" . | nindent 4 }}
+---
+# Plain HTTP: the server does not terminate TLS. See service in values.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "factory.fullname" . }}
+  labels:
+    {{- include "factory.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "factory.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP

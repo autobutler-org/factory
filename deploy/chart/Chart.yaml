@@ -1,0 +1,11 @@
+apiVersion: v2
+name: factory
+description: The factory server, its database migrations, and what the server needs to launch worker Jobs.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+# The worker Job fields the server uses are GA from 1.33 (docs/decisions/0001-agent-runtime.md).
+kubeVersion: ">=1.33.0-0"
+home: https://github.com/autobutler-org/factory
+sources:
+  - https://github.com/autobutler-org/factory

@@ -1,0 +1,137 @@
+# Values for the factory chart. docs/operations.md explains installing and running it.
+#
+# The chart creates no Secrets and no namespaces. Every Secret below is referenced by name and must exist
+# before install; NOTES.txt and docs/operations.md list them.
+
+# The server image. The tag defaults to the chart's appVersion. A digest, when set, is appended
+# (repository:tag@digest) and is what the kubelet pulls.
+image:
+  repository: ghcr.io/autobutler-org/factory
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# One replica is enough. The launcher and the lease reaper are safe to run in more than one replica, so this
+# can be raised for availability.
+replicaCount: 1
+
+# Postgres URL, read by the server and by the migration Job (FACTORY_DATABASE_URL).
+database:
+  secretName: factory-database
+  secretKey: url
+
+# The shared bearer token for /api/v1 (FACTORY_API_TOKEN), from an existing Secret with the key `token`.
+# The server refuses to listen on a non-loopback address without it.
+apiToken:
+  secretName: factory-api-token
+
+# GitHub App that mints workers' repository tokens. Leave appId empty to run without one.
+# The private key Secret must have the key `private-key.pem`; it is mounted read-only into the server.
+github:
+  appId: ""
+  privateKeySecretName: ""
+  # Only for GitHub Enterprise, for example https://github.example.com/api/v3. Empty uses api.github.com.
+  apiUrl: ""
+
+# Lease settings (docs/config.md). Empty leaves the binary's default.
+lease:
+  lease: ""
+  stuckAfter: ""
+  maxAttempts: ""
+  retryDelay: ""
+
+# The server's Service. This is plain HTTP: the server does not terminate TLS and the chart has no ingress or
+# certificate. With the default LoadBalancer type the API, and its bearer token, cross the network
+# unencrypted. Resolve this before real use.
+service:
+  type: LoadBalancer
+  port: 80
+  annotations: {}
+
+# Placement and resources for the server pod. The launcher's worker placement is under `launcher`.
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# The launcher in the server starts one Kubernetes Job per worker sandbox in workers.namespace.
+# With enabled: false the server starts no Jobs.
+launcher:
+  enabled: true
+  # URL workers use to reach the server. Empty means this release's Service:
+  # http://<service>.<release namespace>.svc.cluster.local:<service.port>
+  serverUrl: ""
+  maxSandboxes: 4
+  # Destroy a worker sandbox still pending after this long (image pull error, unschedulable); 0 never does.
+  pendingTimeout: 10m
+  # Capabilities the worker image registers (its usable harnesses). Items that require anything else are
+  # neither planned nor given a sandbox.
+  capabilities:
+    - claude-code
+  # Node placement for worker pods, rendered into FACTORY_LAUNCHER_NODE_SELECTOR and
+  # FACTORY_LAUNCHER_TOLERATIONS. A toleration with a value uses operator Equal; without one, Exists.
+  #   nodeSelector:
+  #     example.org/workers: "true"
+  #   tolerations:
+  #     - key: example.org/workers
+  #       value: "true"
+  #       effect: NoSchedule
+  nodeSelector: {}
+  tolerations: []
+  # Requests and limits on each worker container.
+  resources:
+    requests:
+      cpu: 1
+      memory: 2Gi
+      ephemeral-storage: 10Gi
+    limits:
+      cpu: 4
+      memory: 8Gi
+      ephemeral-storage: 20Gi
+  # A RuntimeClass for worker pods, for example gvisor. Empty uses the cluster default.
+  runtimeClassName: ""
+
+# The worker namespace and what the chart puts in it. The namespace must already exist.
+workers:
+  namespace: factory-workers
+  # The worker image. The tag defaults to image.tag, then to the chart's appVersion.
+  image:
+    repository: ghcr.io/autobutler-org/factory-worker
+    tag: ""
+    digest: ""
+  # Created by the chart with no RoleBindings and no automounted token.
+  serviceAccountName: factory-worker
+  # Secrets in the worker namespace, created by a human.
+  # Key `token`: the same value as the server's apiToken Secret.
+  apiTokenSecretName: factory-worker-api-token
+  # Key `api-key`: the model API key, given to workers as ANTHROPIC_API_KEY.
+  modelKeySecretName: factory-model-api-key
+  egress:
+    # HTTPS hosts workers may reach when networkPolicy.cilium is true: GitHub for git and gh, and the model API.
+    # A name with `*` is a pattern.
+    fqdns:
+      - github.com
+      - api.github.com
+      - codeload.github.com
+      - "*.githubusercontent.com"
+      - api.anthropic.com
+    # When networkPolicy.cilium is false, workers may reach any address on 443 except these.
+    denyCidrs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+
+# Egress policy for worker pods: DNS, this release's server pods, and HTTPS out; no ingress.
+# Deferred: a policy for the server pods themselves (admitting the load balancer, workers and a scraper).
+networkPolicy:
+  enabled: true
+  # true renders a CiliumNetworkPolicy with hostname (toFQDNs) rules. The default is false because that CRD only
+  # exists on Cilium clusters; the plain NetworkPolicy works on any CNI that enforces NetworkPolicy, at the cost
+  # of allowing any public address on 443.
+  cilium: false
+
+metrics:
+  podMonitor:
+    # The server has no /metrics endpoint yet (#13), so enabling this scrapes nothing useful.
+    # The PodMonitor is the Azure managed Prometheus CRD, azmonitoring.coreos.com/v1.
+    enabled: false

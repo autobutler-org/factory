@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "factory.fullname" . }}
+  labels:
+    {{- include "factory.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "factory.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "factory.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "factory.fullname" . }}
+      # The token is only needed to create worker Jobs.
+      automountServiceAccountToken: {{ .Values.launcher.enabled }}
+      securityContext:
+        {{- include "factory.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: factory
+          image: {{ include "factory.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: FACTORY_ADDR
+              value: "0.0.0.0:8080"
+            {{- include "factory.databaseEnv" . | nindent 12 }}
+            - name: FACTORY_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiToken.secretName }}
+                  key: token
+            {{- if .Values.github.appId }}
+            - name: FACTORY_GITHUB_APP_ID
+              value: {{ .Values.github.appId | quote }}
+            - name: FACTORY_GITHUB_APP_KEY_FILE
+              value: /var/run/factory/github/private-key.pem
+            {{- end }}
+            {{- with .Values.github.apiUrl }}
+            - name: FACTORY_GITHUB_API_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.lease.lease }}
+            - name: FACTORY_LEASE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.lease.stuckAfter }}
+            - name: FACTORY_STUCK_AFTER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.lease.maxAttempts }}
+            - name: FACTORY_MAX_ATTEMPTS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.lease.retryDelay }}
+            - name: FACTORY_RETRY_DELAY
+              value: {{ . | quote }}
+            {{- end }}
+            - name: FACTORY_LAUNCHER
+              value: {{ .Values.launcher.enabled | quote }}
+            {{- if .Values.launcher.enabled }}
+            - name: FACTORY_LAUNCHER_NAMESPACE
+              value: {{ .Values.workers.namespace | quote }}
+            - name: FACTORY_LAUNCHER_IMAGE
+              value: {{ include "factory.workerImage" . | quote }}
+            - name: FACTORY_LAUNCHER_SERVER_URL
+              value: {{ include "factory.serverUrl" . | quote }}
+            - name: FACTORY_LAUNCHER_MAX_SANDBOXES
+              value: {{ .Values.launcher.maxSandboxes | quote }}
+            - name: FACTORY_LAUNCHER_PENDING_TIMEOUT
+              value: {{ .Values.launcher.pendingTimeout | quote }}
+            - name: FACTORY_LAUNCHER_CAPABILITIES
+              value: {{ join "," .Values.launcher.capabilities | quote }}
+            - name: FACTORY_LAUNCHER_SERVICE_ACCOUNT
+              value: {{ .Values.workers.serviceAccountName | quote }}
+            {{- with .Values.launcher.nodeSelector }}
+            - name: FACTORY_LAUNCHER_NODE_SELECTOR
+              value: {{ include "factory.pairs" . | quote }}
+            {{- end }}
+            {{- with .Values.launcher.tolerations }}
+            - name: FACTORY_LAUNCHER_TOLERATIONS
+              value: {{ include "factory.tolerations" . | quote }}
+            {{- end }}
+            {{- with .Values.launcher.resources.requests }}
+            - name: FACTORY_LAUNCHER_REQUESTS
+              value: {{ include "factory.pairs" . | quote }}
+            {{- end }}
+            {{- with .Values.launcher.resources.limits }}
+            - name: FACTORY_LAUNCHER_LIMITS
+              value: {{ include "factory.pairs" . | quote }}
+            {{- end }}
+            - name: FACTORY_LAUNCHER_API_TOKEN_SECRET
+              value: {{ .Values.workers.apiTokenSecretName | quote }}
+            - name: FACTORY_LAUNCHER_MODEL_KEY_SECRET
+              value: {{ .Values.workers.modelKeySecretName | quote }}
+            {{- with .Values.launcher.runtimeClassName }}
+            - name: FACTORY_LAUNCHER_RUNTIME_CLASS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          securityContext:
+            {{- include "factory.containerSecurityContext" . | nindent 12 }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.github.appId }}
+          volumeMounts:
+            - name: github-app
+              mountPath: /var/run/factory/github
+              readOnly: true
+          {{- end }}
+      {{- if .Values.github.appId }}
+      volumes:
+        - name: github-app
+          secret:
+            secretName: {{ required "github.privateKeySecretName is required when github.appId is set" .Values.github.privateKeySecretName }}
+            defaultMode: 0440
+            items:
+              - key: private-key.pem
+                path: private-key.pem
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

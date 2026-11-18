@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Fake is an in-memory Runtime for tests. Ensure creates a pending sandbox;
@@ -16,45 +17,56 @@ import (
 // "<name>: <command>\n" to Stdout, then copies Stdin to Stdout.
 type Fake struct {
 	mu        sync.Mutex
-	sandboxes map[string]Phase
+	sandboxes map[string]Sandbox
 }
 
 var _ Runtime = (*Fake)(nil)
 
 // NewFake returns an empty Fake.
 func NewFake() *Fake {
-	return &Fake{sandboxes: map[string]Phase{}}
+	return &Fake{sandboxes: map[string]Sandbox{}}
 }
 
 // SetPhase moves the named sandbox to phase, creating it if needed.
 func (f *Fake) SetPhase(name string, phase Phase) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.sandboxes[name] = phase
+	sb := f.sandboxes[name]
+	sb.Name, sb.Phase = name, phase
+	f.sandboxes[name] = sb
+}
+
+// SetCreated sets when the named sandbox was created, so a test can age it.
+func (f *Fake) SetCreated(name string, created time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sb := f.sandboxes[name]
+	sb.Name, sb.Created = name, created
+	f.sandboxes[name] = sb
 }
 
 // Ensure implements Runtime.
-func (f *Fake) Ensure(_ context.Context, name string) (Sandbox, error) {
+func (f *Fake) Ensure(_ context.Context, name, key string) (Sandbox, error) {
 	if name == "" {
 		return Sandbox{}, errors.New("ensure sandbox: name is empty")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.sandboxes[name]; !ok {
-		f.sandboxes[name] = PhasePending
+		f.sandboxes[name] = Sandbox{Name: name, Key: key, Phase: PhasePending, Created: time.Now()}
 	}
-	return Sandbox{Name: name, Phase: f.sandboxes[name]}, nil
+	return f.sandboxes[name], nil
 }
 
 // Status implements Runtime.
 func (f *Fake) Status(_ context.Context, name string) (Sandbox, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	phase, ok := f.sandboxes[name]
+	sb, ok := f.sandboxes[name]
 	if !ok {
 		return Sandbox{}, fmt.Errorf("sandbox %q: %w", name, ErrNotFound)
 	}
-	return Sandbox{Name: name, Phase: phase}, nil
+	return sb, nil
 }
 
 // List implements Runtime.
@@ -64,7 +76,7 @@ func (f *Fake) List(_ context.Context) ([]Sandbox, error) {
 	names := slices.Sorted(maps.Keys(f.sandboxes))
 	out := make([]Sandbox, 0, len(names))
 	for _, name := range names {
-		out = append(out, Sandbox{Name: name, Phase: f.sandboxes[name]})
+		out = append(out, f.sandboxes[name])
 	}
 	return out, nil
 }

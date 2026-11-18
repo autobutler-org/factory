@@ -1,0 +1,31 @@
+factory {{ .Chart.AppVersion }} is installed as {{ include "factory.fullname" . }} in {{ .Release.Namespace }}.
+
+WARNING: the {{ .Values.service.type }} Service serves plain HTTP. The server does not terminate TLS and this
+chart has no ingress or certificate, so the API and its bearer token cross the network unencrypted.
+Resolve this before real use.
+
+The chart creates no Secrets. These must exist (see docs/operations.md):
+
+  {{ .Release.Namespace }}/{{ .Values.database.secretName }}  key {{ .Values.database.secretKey }}  Postgres URL
+  {{ .Release.Namespace }}/{{ .Values.apiToken.secretName }}  key token  API bearer token
+{{- if .Values.github.appId }}
+  {{ .Release.Namespace }}/{{ .Values.github.privateKeySecretName }}  key private-key.pem  GitHub App private key
+{{- end }}
+{{- if .Values.launcher.enabled }}
+  {{ .Values.workers.namespace }}/{{ .Values.workers.apiTokenSecretName }}  key token  same value as the API token
+  {{ .Values.workers.namespace }}/{{ .Values.workers.modelKeySecretName }}  key api-key  model API key
+{{- end }}
+
+Check the server:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "factory.fullname" . }}
+  kubectl -n {{ .Release.Namespace }} get service {{ include "factory.fullname" . }}
+{{- if .Values.launcher.enabled }}
+
+Worker Jobs:
+
+  kubectl -n {{ .Values.workers.namespace }} get jobs -l app.kubernetes.io/name=factory-worker
+{{- else }}
+
+The launcher is off: the server starts no worker Jobs.
+{{- end }}

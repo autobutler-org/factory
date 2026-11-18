@@ -142,3 +142,45 @@ WHERE s.state = 'running' AND s.stage_reported_at <= now() - make_interval(secs 
 ORDER BY s.stage_reported_at
 LIMIT @max_rows
 FOR UPDATE OF w SKIP LOCKED;
+
+-- name: RunnableSandboxes :many
+-- The sandbox keys of chains with a step a sandboxed worker could claim now:
+-- ready and available, not a wait step, in the current graph of an item
+-- being worked by the step protocol whose requirements the launched workers
+-- meet, and no step of the chain running. Highest-priority item first.
+SELECT s.sandbox_key FROM work_steps s
+JOIN work_graphs g ON g.id = s.graph_id AND g.state = 'current'
+JOIN work_items w ON w.id = g.work_item_id
+WHERE s.state = 'ready'
+  AND s.available_at <= now()
+  AND s.sandbox_key <> ''
+  AND NOT (s.kind = ANY (@wait_kinds::text[]))
+  AND w.state IN ('in_progress', 'in_review')
+  AND w.claimed_by IS NULL
+  AND w.requires <@ @capabilities::text[]
+  AND NOT EXISTS (
+      SELECT 1 FROM work_steps r WHERE r.state = 'running' AND r.sandbox_key = s.sandbox_key)
+GROUP BY s.sandbox_key
+ORDER BY max(w.priority) DESC, min(w.created_at), s.sandbox_key;
+
+-- name: UnfinishedSandboxSteps :one
+-- How many steps of a chain can still run: pending, ready or running.
+SELECT count(*) FROM work_steps WHERE sandbox_key = @sandbox_key AND state IN ('pending', 'ready', 'running');
+
+-- name: PickServerStep :one
+-- The next step the server runs itself: one with no sandbox that is not a
+-- wait step (merge), ready and available, in the current graph of an item
+-- being worked by the step protocol. Capabilities do not apply: the server
+-- needs none of the item's requirements to merge.
+SELECT s.id, w.id AS work_item_id FROM work_steps s
+JOIN work_graphs g ON g.id = s.graph_id AND g.state = 'current'
+JOIN work_items w ON w.id = g.work_item_id
+WHERE s.state = 'ready'
+  AND s.available_at <= now()
+  AND s.sandbox_key = ''
+  AND NOT (s.kind = ANY (@wait_kinds::text[]))
+  AND w.state IN ('in_progress', 'in_review')
+  AND w.claimed_by IS NULL
+ORDER BY w.priority DESC, w.created_at, w.id, s.position
+LIMIT 1
+FOR UPDATE OF w SKIP LOCKED;

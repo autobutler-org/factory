@@ -82,6 +82,25 @@ build/go: ## Build ./build/factory with the version stamped in
 	mkdir -p ./build
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(EXE) $(MAIN)
 
+IMAGE ?= factory:dev
+WORKER_IMAGE ?= factory-worker:dev
+
+.PHONY: build/image
+build/image: ## Build the server image (IMAGE=factory:dev) with the version stamped in
+	if ! docker info >/dev/null 2>&1; then
+		echo "Docker is not running. Start Docker Desktop (or the docker daemon), then run \`make build/image\` again."
+		exit 1
+	fi
+	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) -t $(IMAGE) -f Dockerfile .
+
+.PHONY: build/image/worker
+build/image/worker: ## Build the worker image, the agent dev container (WORKER_IMAGE=factory-worker:dev)
+	if ! docker info >/dev/null 2>&1; then
+		echo "Docker is not running. Start Docker Desktop (or the docker daemon), then run \`make build/image/worker\` again."
+		exit 1
+	fi
+	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) -t $(WORKER_IMAGE) -f Dockerfile.worker .
+
 .PHONY: clean
 clean: ## Remove build output
 	rm -rf ./build ./tmp
@@ -154,6 +173,17 @@ check/migrations: ## Fail if a migration lacks its up or down file, or the numbe
 			exit 1
 		fi
 	done
+
+.PHONY: check/chart
+check/chart: ## Lint the Helm chart and render it with the default and example values
+	if ! command -v helm >/dev/null 2>&1; then
+		echo "helm is not installed. Install Helm from https://helm.sh/docs/intro/install/, then re-run this check."
+		exit 1
+	fi
+	helm lint --quiet deploy/chart
+	helm lint --quiet deploy/chart -f deploy/chart/values-autobutler.example.yaml
+	helm template factory deploy/chart --namespace factory >/dev/null
+	helm template factory deploy/chart --namespace factory -f deploy/chart/values-autobutler.example.yaml >/dev/null
 
 .PHONY: check/vuln
 check/vuln: ## Fail on reachable known vulnerabilities (needs network, so not part of make check)

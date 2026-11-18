@@ -16,10 +16,11 @@ import (
 	"github.com/autobutler-org/factory/internal/codehost"
 	"github.com/autobutler-org/factory/internal/db"
 	"github.com/autobutler-org/factory/internal/lease"
+	"github.com/autobutler-org/factory/internal/sandbox"
 	"github.com/autobutler-org/factory/internal/work"
 )
 
-const serveUsage = `usage: factory serve [flags]
+const serveUsageTemplate = `usage: factory serve [flags]
 
 Serve the HTTP API until interrupted, then shut down gracefully.
 Refuses to start against a database that is behind this binary's migrations.
@@ -42,11 +43,13 @@ Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_ADDR):
   --github-app-key-file PATH
                        the GitHub App's PEM private key
   --github-api-url URL GitHub REST API base URL (default https://api.github.com)
-
+%s
 Environment:
   FACTORY_API_TOKEN    bearer token required on /api/v1. When unset the API is
                        unauthenticated and --addr must be a loopback address.
 `
+
+var serveUsage = fmt.Sprintf(serveUsageTemplate, launcherUsage)
 
 const (
 	shutdownTimeout = 10 * time.Second
@@ -66,6 +69,7 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	appID := fs.String("github-app-id", "", "")
 	appKeyFile := fs.String("github-app-key-file", "", "")
 	githubAPI := fs.String("github-api-url", codehost.DefaultGitHubAPI, "")
+	launch := addLauncherFlags(fs)
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, serveUsage)
@@ -100,10 +104,22 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "factory serve: set both --github-app-id and --github-app-key-file to mint repository tokens, or neither.\n%s", serveUsage)
 		return 2
 	}
+	jobsConfig, err := launch.jobsConfig()
+	if err != nil {
+		fmt.Fprintf(stderr, "factory serve: %v\n%s", err, serveUsage)
+		return 2
+	}
 	mintToken, err := githubApp(*appID, *appKeyFile, *githubAPI)
 	if err != nil {
 		fmt.Fprintf(stderr, "factory serve: %v\n", err)
 		return 1
+	}
+	var jobs *sandbox.Jobs
+	if *launch.enabled {
+		if jobs, err = newJobs(jobsConfig); err != nil {
+			fmt.Fprintf(stderr, "factory serve: %v\n", err)
+			return 1
+		}
 	}
 	if *databaseURL == "" {
 		fmt.Fprintf(stderr, "factory serve: %v\n", db.ErrNoDatabaseURL)
@@ -153,6 +169,19 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		reap(ctx, svc, max(policy.Lease/5, time.Second), logger)
 	}()
 	defer func() { <-reaperDone }()
+
+	// The server's own worker runs server-side steps only with the
+	// launcher on, so a server without it behaves as before.
+	if jobs != nil {
+		l := launch.newLauncher(jobs, svc, pool, mintToken, *githubAPI, logger)
+		launcherDone := make(chan struct{})
+		go func() {
+			defer close(launcherDone)
+			l.Run(ctx, launcherInterval)
+		}()
+		defer func() { <-launcherDone }()
+		logger.Info("launcher on", "namespace", jobsConfig.Namespace, "image", jobsConfig.Image, "max_sandboxes", *launch.maxSandboxes)
+	}
 
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(listener) }()
