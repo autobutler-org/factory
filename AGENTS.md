@@ -14,16 +14,17 @@ cmd/factory/        the binary: parses arguments, dispatches subcommands, maps e
 internal/           business logic, one package per concern; no package needs HTTP or CLI context
 internal/db/        pgx pool, embedded golang-migrate migrations (migrations/), sqlc output (generated)
 internal/db/dbtest/ NewDB(t): a Postgres schema per test with the real migrations applied
+internal/work/      the work item service and state machine; the only code that changes state
 sql/queries/        the SQL sqlc compiles into internal/db
 compose.yaml        the development Postgres, on loopback
 web/                the web UI, embedded in the binary (#14)
-docs/               architecture and operator docs
+docs/               architecture and operator docs (docs/architecture/work.md: states and rules)
 build/              build output (./build/factory); not source
 .github/workflows/  ci.yml (build, race tests, test-db on Postgres), check.yml (make check, govulncheck, attribution),
                     pr-title.yml, auto-assign-author.yml
 ```
 
-`web/` and `docs/` do not exist yet. The issue that first needs each one creates it.
+`web/` does not exist yet. The issue that first needs each one creates it.
 
 ## Use Makefile targets (always)
 
