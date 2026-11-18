@@ -36,7 +36,8 @@ to have yours used instead.
 Cluster workers claim steps (`POST /api/v1/workers/{id}/claim`) and report on them under
 `/api/v1/steps/{id}/` (`stage`, `result`, `release`); adapters complete wait steps with
 `POST /api/v1/steps/{id}/complete`. Developers claim whole items under `/api/v1/work/{id}/` (`claim`, `stage`,
-`result`, `release`, `outputs`). Both are specified in [architecture/workers.md](architecture/workers.md), with
+`result`, `release`, `outputs`). Either kind of claimant gets code host tokens from
+`POST /api/v1/work/{id}/codehost-token`. All of it is specified in [architecture/workers.md](architecture/workers.md), with
 the error codes workers handle (`not_claimant`, `lease_expired`, `worker_not_active`, `not_waiting`).
 
 ### Enqueueing work
@@ -97,6 +98,8 @@ Every error has the same shape:
 | 409 | `not_claimant`, `lease_expired`, `worker_not_active` | Worker protocol; see [architecture/workers.md](architecture/workers.md#errors). |
 | 409 | `not_waiting` | Completing a step that is not a wait step waiting for its event. |
 | 409 | `not_replannable` | Replanning an item that is not `in_progress` or `in_review`. |
+| 403 | `repo_not_allowed` | A code host token was asked for a repository the claim does not cover. |
+| 503 | `codehost_not_configured` | `POST /api/v1/work/{id}/codehost-token` on a server started without a GitHub App. |
 | 413 | `body_too_large` | The body is over 1 MiB. |
 | 422 | `invalid_request` | The body parsed but a value is invalid, including an unknown `blocked_by`. |
 | 503 | `not_ready` | From `/readyz` only. |

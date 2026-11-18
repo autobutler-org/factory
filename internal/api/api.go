@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobutler-org/factory/internal/codehost"
 	"github.com/autobutler-org/factory/internal/lease"
 	"github.com/autobutler-org/factory/internal/work"
 )
@@ -45,6 +46,9 @@ type Config struct {
 	// events record actor "api". Real identities and scoped tokens are #15.
 	Token  string
 	Logger *slog.Logger
+	// MintToken mints a code host token for one repository. Nil means no
+	// GitHub App is configured, and codehost-token requests get 503.
+	MintToken func(ctx context.Context, repo string) (codehost.Token, error)
 }
 
 type ctxKey struct{}
@@ -78,6 +82,7 @@ func New(cfg Config) http.Handler {
 	v1.HandleFunc("POST /api/v1/work/{id}/stage", h.stage)
 	v1.HandleFunc("POST /api/v1/work/{id}/result", h.result)
 	v1.HandleFunc("POST /api/v1/work/{id}/outputs", h.recordOutput)
+	v1.HandleFunc("POST /api/v1/work/{id}/codehost-token", h.codehostToken)
 	v1.HandleFunc("POST /api/v1/workers", h.registerWorker)
 	v1.HandleFunc("GET /api/v1/workers", h.listWorkers)
 	v1.HandleFunc("POST /api/v1/workers/{id}/heartbeat", h.heartbeat)
@@ -225,6 +230,8 @@ func (h handlers) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusConflict, "not_replannable", err.Error(), nil)
 	case errors.Is(err, work.ErrOutputConflict):
 		writeError(w, r, http.StatusConflict, "output_conflict", err.Error(), nil)
+	case errors.Is(err, work.ErrRepoNotAllowed):
+		writeError(w, r, http.StatusForbidden, "repo_not_allowed", err.Error(), nil)
 	default:
 		h.cfg.Logger.ErrorContext(r.Context(), "request failed", "path", r.URL.Path, "err", err)
 		writeError(w, r, http.StatusInternalServerError, "internal", "internal error; the server log has the details", nil)

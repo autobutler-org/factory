@@ -9,7 +9,10 @@
 //
 // It does not speak HTTP or parse flags, and it does not decide who may call
 // it; callers pass an Actor that is recorded on each event. See
-// docs/architecture/work.md for the states and the rules.
+// docs/architecture/work.md for the states and the rules. RepoToken holds the
+// one rule about code host credentials: a token for a repository goes only
+// to a worker whose live step claim, or local claim on the item, covers that
+// repository (docs/architecture/codehost.md).
 package work
 
 import (
