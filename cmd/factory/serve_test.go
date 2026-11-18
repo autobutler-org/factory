@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +30,9 @@ func TestServeRefusesBeforeListening(t *testing.T) {
 		{name: "zero attempts", args: []string{"--max-attempts", "0"}, wantCode: 2, wantStderr: "max-attempts"},
 		{name: "bad duration", args: []string{"--lease", "soon"}, wantCode: 2, wantStderr: "lease"},
 		{name: "no database", args: nil, wantCode: 1, wantStderr: db.ErrNoDatabaseURL.Error()},
+		{name: "app id without a key", args: []string{"--github-app-id", "12345"}, wantCode: 2, wantStderr: "--github-app-key-file"},
+		{name: "key without an app id", args: []string{"--github-app-key-file", "app.pem"}, wantCode: 2, wantStderr: "--github-app-id"},
+		{name: "missing key file", args: []string{"--github-app-id", "1", "--github-app-key-file", "/nonexistent/app.pem"}, wantCode: 1, wantStderr: "/nonexistent/app.pem"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -39,6 +44,24 @@ func TestServeRefusesBeforeListening(t *testing.T) {
 				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tt.wantStderr)
 			}
 		})
+	}
+}
+
+// TestServeRefusesABadAppKeyWithoutEchoingIt names the key file, not its
+// contents.
+func TestServeRefusesABadAppKeyWithoutEchoingIt(t *testing.T) {
+	t.Setenv("FACTORY_API_TOKEN", "")
+	keyFile := filepath.Join(t.TempDir(), "app.pem")
+	const secret = "-----BEGIN RSA PRIVATE KEY-----\nc2VjcmV0LWtleS1ieXRlcw==\n-----END RSA PRIVATE KEY-----\n"
+	if err := os.WriteFile(keyFile, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FACTORY_GITHUB_APP_ID", "12345")
+	t.Setenv("FACTORY_GITHUB_APP_KEY_FILE", keyFile)
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"serve"}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), keyFile) || strings.Contains(stderr.String(), "c2VjcmV0") {
+		t.Fatalf("exit %d, stderr %q; want 1, the file name, and not the key", code, stderr.String())
 	}
 }
 

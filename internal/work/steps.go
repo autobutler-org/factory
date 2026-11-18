@@ -147,7 +147,7 @@ func (s *Service) ClaimStep(ctx context.Context, workerID, sandboxKey string) (c
 // ponytail: every repository gets plan.DefaultRepoConfig until #11 reads
 // .factory/config.toml; pass the loaded configs here then.
 func (s *Service) start(ctx context.Context, q *db.Queries, item db.WorkItem, actor Actor) error {
-	g, err := plan.Plan(plan.Item{ID: item.ID, Repos: item.Repos}, nil, plan.DefaultTemplate())
+	g, err := plan.Plan(plan.Item{ID: item.ID, Title: item.Title, Repos: item.Repos}, nil, plan.DefaultTemplate())
 	if err != nil {
 		_, err = transition(ctx, q, item, Blocked, "cannot plan: "+err.Error(), Actor{Kind: ActorSystem, ID: "planner"}, EventTransition, nil)
 		return err
@@ -536,7 +536,7 @@ func (s *Service) Replan(ctx context.Context, itemID string, actor Actor) (Graph
 		if !active(item.State) {
 			return fmt.Errorf("work item %s is %s: %w", itemID, item.State, ErrNotReplannable)
 		}
-		g, err := plan.Plan(plan.Item{ID: item.ID, Repos: item.Repos}, nil, plan.DefaultTemplate())
+		g, err := plan.Plan(plan.Item{ID: item.ID, Title: item.Title, Repos: item.Repos}, nil, plan.DefaultTemplate())
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalid, err)
 		}

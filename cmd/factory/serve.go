@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/autobutler-org/factory/internal/api"
+	"github.com/autobutler-org/factory/internal/codehost"
 	"github.com/autobutler-org/factory/internal/db"
 	"github.com/autobutler-org/factory/internal/lease"
 	"github.com/autobutler-org/factory/internal/work"
@@ -36,6 +37,11 @@ Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_ADDR):
   --retry-delay DURATION
                        wait before handing out a retried step or item
                        (default 1m)
+  --github-app-id ID   GitHub App that mints workers' repository tokens; set
+                       it with --github-app-key-file, or leave both unset
+  --github-app-key-file PATH
+                       the GitHub App's PEM private key
+  --github-api-url URL GitHub REST API base URL (default https://api.github.com)
 
 Environment:
   FACTORY_API_TOKEN    bearer token required on /api/v1. When unset the API is
@@ -57,6 +63,9 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	stuckAfter := fs.Duration("stuck-after", defaults.StuckAfter, "")
 	maxAttempts := fs.Int("max-attempts", defaults.MaxAttempts, "")
 	retryDelay := fs.Duration("retry-delay", defaults.RetryDelay, "")
+	appID := fs.String("github-app-id", "", "")
+	appKeyFile := fs.String("github-app-key-file", "", "")
+	githubAPI := fs.String("github-api-url", codehost.DefaultGitHubAPI, "")
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, serveUsage)
@@ -87,6 +96,15 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			"Set %s, or bind to loopback with --addr 127.0.0.1:8080.\n", apiTokenEnv, *addr, apiTokenEnv)
 		return 2
 	}
+	if (*appID == "") != (*appKeyFile == "") {
+		fmt.Fprintf(stderr, "factory serve: set both --github-app-id and --github-app-key-file to mint repository tokens, or neither.\n%s", serveUsage)
+		return 2
+	}
+	mintToken, err := githubApp(*appID, *appKeyFile, *githubAPI)
+	if err != nil {
+		fmt.Fprintf(stderr, "factory serve: %v\n", err)
+		return 1
+	}
 	if *databaseURL == "" {
 		fmt.Fprintf(stderr, "factory serve: %v\n", db.ErrNoDatabaseURL)
 		return 1
@@ -112,7 +130,7 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	svc := work.New(pool).WithPolicy(policy)
 	srv := &http.Server{
-		Handler:           api.New(api.Config{Work: svc, Ready: ready, Token: token, Logger: logger}),
+		Handler:           api.New(api.Config{Work: svc, Ready: ready, Token: token, Logger: logger, MintToken: mintToken}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -152,6 +170,24 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	logger.Info("stopped")
 	return 0
+}
+
+// githubApp returns the minter of repository tokens for the GitHub App with
+// appID and the private key in keyFile, or nil when no App is configured.
+// Errors name the file, never its contents.
+func githubApp(appID, keyFile, apiURL string) (func(context.Context, string) (codehost.Token, error), error) {
+	if appID == "" {
+		return nil, nil
+	}
+	pemBytes, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("read --github-app-key-file: %w. Point it at the App's private key (.pem)", err)
+	}
+	key, err := codehost.ParsePrivateKey(pemBytes)
+	if err != nil {
+		return nil, fmt.Errorf("--github-app-key-file %s: %w. Download a new private key from the App's settings", keyFile, err)
+	}
+	return codehost.TokenMinter{AppID: appID, Key: key, API: apiURL}.Mint, nil
 }
 
 // reap runs the lease reaper, for item and step leases, every interval until

@@ -16,7 +16,7 @@ import (
 	"github.com/autobutler-org/factory/internal/work"
 )
 
-var adapter = work.Actor{Kind: work.ActorAdapter, ID: "fake-forge"}
+var adapter = work.Actor{Kind: work.ActorAdapter, ID: "fake-codehost"}
 
 func claimStep(t *testing.T, svc *work.Service, workerID, sandboxKey string) (work.StepClaim, bool) {
 	t.Helper()
@@ -84,7 +84,7 @@ func fakeResult(c work.StepClaim) work.StepResult {
 		Repo string `json:"repo"`
 	}
 	_ = json.Unmarshal(c.Step.Params, &p)
-	url := "https://forge.test/" + p.Repo + "/pull/1"
+	url := "https://codehost.test/" + p.Repo + "/pull/1"
 	switch c.Step.Kind {
 	case plan.Review:
 		return succeed(`{"verdict":"pass"}`)
@@ -142,7 +142,7 @@ func TestClaimPlansTheItem(t *testing.T) {
 	if c.Item.ID != item.ID || c.Item.State != work.InProgress || c.Step.State != plan.Running || c.Step.SandboxKey != item.ID+"/o/a" {
 		t.Fatalf("claim: %+v", c)
 	}
-	if !strings.Contains(string(c.Step.Params), `"branch": "factory/`+item.ID) {
+	if !strings.Contains(string(c.Step.Params), `"branch": "`+plan.BranchName(item.ID, item.Title)+`"`) {
 		t.Errorf("workspace params: %s", c.Step.Params)
 	}
 	g, err := svc.Graph(ctx, item.ID)

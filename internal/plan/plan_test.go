@@ -34,7 +34,7 @@ func TestGolden(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			g, err := plan.Plan(plan.Item{ID: itemID, Repos: c.repos}, c.configs, plan.DefaultTemplate())
+			g, err := plan.Plan(plan.Item{ID: itemID, Title: "Add null check to the importer", Repos: c.repos}, c.configs, plan.DefaultTemplate())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -56,7 +56,7 @@ func TestGolden(t *testing.T) {
 			if string(got) != string(want) {
 				t.Fatalf("graph differs from %s (run `make generate/golden` if the change is intended):\n%s", path, got)
 			}
-			again, _ := plan.Plan(plan.Item{ID: itemID, Repos: c.repos}, c.configs, plan.DefaultTemplate())
+			again, _ := plan.Plan(plan.Item{ID: itemID, Title: "Add null check to the importer", Repos: c.repos}, c.configs, plan.DefaultTemplate())
 			if again.InputsHash != g.InputsHash {
 				t.Fatal("same inputs gave a different inputs_hash")
 			}

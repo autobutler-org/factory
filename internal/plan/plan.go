@@ -80,6 +80,7 @@ func needsSandbox(kind string) bool { return !IsWait(kind) && kind != Merge }
 // Item is what the planner needs from a work item.
 type Item struct {
 	ID    string   `json:"id"`
+	Title string   `json:"title"`
 	Repos []string `json:"repos"`
 }
 
@@ -183,7 +184,7 @@ func Plan(item Item, configs map[string]RepoConfig, t Template) (Graph, error) {
 			default:
 				params := map[string]any{"repo": repo}
 				if kind == Workspace {
-					params["branch"] = "factory/" + item.ID
+					params["branch"] = BranchName(item.ID, item.Title)
 				}
 				c.add(kind, kind, params, "")
 			}

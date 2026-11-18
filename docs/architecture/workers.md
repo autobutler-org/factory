@@ -83,7 +83,7 @@ The body is optional: `{"sandbox_key": "b2e9.../autobutler-org/quark"}` restrict
            "claimed_by": "6f1c...", "lease_expires_at": "...", "stage": "", "stage_reported_at": "...",
            "available_at": "...", "result": null, "started_at": "...", "finished_at": null},
   "item": {"id": "b2e9...", "title": "...", "body": "...", "repos": ["autobutler-org/quark"], "state": "in_progress", "...": "..."},
-  "results": {"autobutler-org/quark/workspace": {"branch": "factory/b2e9...", "base": "main", "head": "9fceb02"}},
+  "results": {"autobutler-org/quark/workspace": {"branch": "b2e9c0de_add-null-check", "base": "main", "head": "9fceb02"}},
   "outputs": []
 }
 ```
@@ -136,6 +136,21 @@ graph, steps in plan order. `404` before the item is first planned. `graph` is
 
 No body. For an operator after a template or config change. `200` with the new graph as above; `409
 not_replannable` unless the item is `in_progress` or `in_review`.
+
+### Get a code host token: `POST /api/v1/work/{id}/codehost-token`
+
+`{"worker_id": "6f1c...", "repo": "autobutler-org/quark"}`. A worker gets a GitHub App installation token for one
+repository, valid for an hour, when its claim covers that repository: a live claim on a step of the item whose
+params name `repo`, or a developer's live claim on the whole item when the item's `repos` contain it.
+
+```json
+{"repo": "autobutler-org/quark", "token": "ghs_...", "expires_at": "2026-11-18T13:00:00Z"}
+```
+
+Ask again before it expires. A worker with no claim on the item gets `409 not_claimant`, one whose step lease ran
+out gets `409 lease_expired`, a repository the claim does not cover (such as another repository of the same item)
+gets `403 repo_not_allowed`, and a server without a GitHub App gets `503 codehost_not_configured`. See
+[codehost.md](codehost.md#tokens).
 
 ## The item protocol (local claims)
 
@@ -258,7 +273,7 @@ the item's graph over and cancels its unfinished steps. `200` with the item.
 
 ```json
 {"worker_id": "6f1c...", "stage": "pr_opened",
- "outputs": [{"repo": "autobutler-org/quark", "kind": "pull_request", "branch": "factory/123",
+ "outputs": [{"repo": "autobutler-org/quark", "kind": "pull_request", "branch": "b2e9c0de_add-null-check",
               "url": "https://github.com/autobutler-org/quark/pull/456", "status": "open"}]}
 ```
 
@@ -323,6 +338,8 @@ handle:
 | 409 | `output_conflict` | That pull request or commit belongs to another item. |
 | 409 | `not_waiting` | Completing a step that is not a waiting wait step. |
 | 409 | `not_replannable` | Replanning an item that is not `in_progress` or `in_review`. |
+| 403 | `repo_not_allowed` | A code host token was asked for a repository the claim does not cover. |
+| 503 | `codehost_not_configured` | The server has no GitHub App; it cannot mint code host tokens. |
 | 400 | `malformed_request` | Fix the request body. |
 | 422 | `invalid_request` | A value is invalid, such as an unknown `outcome` or output `kind`. |
 | 500 | `internal` | Retry with backoff. |

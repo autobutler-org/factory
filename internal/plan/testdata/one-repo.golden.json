@@ -1,12 +1,12 @@
 {
   "template": "default",
-  "inputs_hash": "b5ed1ab21d8029cb14fd0a63a3a478e1fcf84adf866ef6ac0d4696bb586d54bd",
+  "inputs_hash": "44dabad7e2ca3f29b20bbc201089f718a488b8a72ba275ef64104e1ae580292b",
   "steps": [
     {
       "key": "o/quark/workspace",
       "kind": "workspace",
       "params": {
-        "branch": "factory/b2e9c0de-0000-4000-8000-000000000001",
+        "branch": "b2e9c0de_add-null-check-to-the-importer",
         "repo": "o/quark"
       },
       "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",

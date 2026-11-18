@@ -42,7 +42,7 @@ or design, and so on), when a replan supersedes its graph, or when a developer c
 ## Planning
 
 `plan.Plan(item, repoConfigs, template)` returns the graph. The same inputs give the same graph down to the step
-keys; `inputs_hash` is the SHA-256 of the item's ID and repositories, each repository's config, and the template.
+keys; `inputs_hash` is the SHA-256 of the item's ID, title and repositories, each repository's config, and the template.
 
 - Each repository in the item's `repos` gets its own chain. Chains with no ordering between them have no edges
   between them and run in parallel.
@@ -96,7 +96,7 @@ step again, and it must find and reuse what an earlier run left.
 
 | Kind | Does | Sandbox | Params besides `repo` | Result | Safe to run twice because |
 | --- | --- | --- | --- | --- | --- |
-| `workspace` | Clone and create the worktree and branch, or re-create them from the pushed branch | yes | `branch` | `{"branch", "base", "head"}` | it reuses a clone and an existing branch |
+| `workspace` | Clone and create the worktree and branch, or re-create them from the pushed branch | yes | `branch`: `plan.BranchName(id, title)`, `<short-id>_<slug>` | `{"branch", "base", "head"}` | it reuses a clone and an existing branch |
 | `implement` | Agent session that writes the change | yes | | `{"head"}` | it continues on the branch it finds |
 | `gate` | The repository's check command; failing is `failed`, not retryable | yes | | `{}` | it only reads |
 | `secret_scan` | Scan the diff; a finding is `failed`, not retryable | yes | | `{}` | it only reads |
