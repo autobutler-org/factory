@@ -28,23 +28,29 @@ type WorkEvent struct {
 }
 
 type WorkItem struct {
-	ID             string    `json:"id"`
-	Source         *string   `json:"source"`
-	ExternalID     *string   `json:"external_id"`
-	ExternalUrl    *string   `json:"external_url"`
-	Title          string    `json:"title"`
-	Body           string    `json:"body"`
-	Repos          []string  `json:"repos"`
-	State          string    `json:"state"`
-	Stage          string    `json:"stage"`
-	StateReason    string    `json:"state_reason"`
-	Priority       int32     `json:"priority"`
-	Attempts       int32     `json:"attempts"`
-	OutputsDone    bool      `json:"outputs_done"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	StateChangedAt time.Time `json:"state_changed_at"`
-	IdempotencyKey *string   `json:"idempotency_key"`
+	ID              string     `json:"id"`
+	Source          *string    `json:"source"`
+	ExternalID      *string    `json:"external_id"`
+	ExternalUrl     *string    `json:"external_url"`
+	Title           string     `json:"title"`
+	Body            string     `json:"body"`
+	Repos           []string   `json:"repos"`
+	State           string     `json:"state"`
+	Stage           string     `json:"stage"`
+	StateReason     string     `json:"state_reason"`
+	Priority        int32      `json:"priority"`
+	Attempts        int32      `json:"attempts"`
+	OutputsDone     bool       `json:"outputs_done"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	StateChangedAt  time.Time  `json:"state_changed_at"`
+	IdempotencyKey  *string    `json:"idempotency_key"`
+	ClaimedBy       *string    `json:"claimed_by"`
+	ClaimedAt       *time.Time `json:"claimed_at"`
+	LeaseExpiresAt  *time.Time `json:"lease_expires_at"`
+	StageReportedAt *time.Time `json:"stage_reported_at"`
+	AvailableAt     time.Time  `json:"available_at"`
+	Requires        []string   `json:"requires"`
 }
 
 type WorkOutput struct {
@@ -58,4 +64,15 @@ type WorkOutput struct {
 	Status     string    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type Worker struct {
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Kind         string          `json:"kind"`
+	Capabilities json.RawMessage `json:"capabilities"`
+	Version      string          `json:"version"`
+	RegisteredAt time.Time       `json:"registered_at"`
+	LastSeenAt   time.Time       `json:"last_seen_at"`
+	State        string          `json:"state"`
 }

@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobutler-org/factory/internal/lease"
 	"github.com/autobutler-org/factory/internal/work"
 )
 
@@ -72,6 +73,15 @@ func New(cfg Config) http.Handler {
 	v1.HandleFunc("GET /api/v1/work/{id}/outputs", h.outputs)
 	v1.HandleFunc("PUT /api/v1/work/{id}/dependencies/{blocked_by_id}", h.putDependency)
 	v1.HandleFunc("DELETE /api/v1/work/{id}/dependencies/{blocked_by_id}", h.deleteDependency)
+	v1.HandleFunc("POST /api/v1/work/{id}/claim", h.claimItem)
+	v1.HandleFunc("POST /api/v1/work/{id}/release", h.release)
+	v1.HandleFunc("POST /api/v1/work/{id}/stage", h.stage)
+	v1.HandleFunc("POST /api/v1/work/{id}/result", h.result)
+	v1.HandleFunc("POST /api/v1/work/{id}/outputs", h.recordOutput)
+	v1.HandleFunc("POST /api/v1/workers", h.registerWorker)
+	v1.HandleFunc("GET /api/v1/workers", h.listWorkers)
+	v1.HandleFunc("POST /api/v1/workers/{id}/heartbeat", h.heartbeat)
+	v1.HandleFunc("POST /api/v1/workers/{id}/claim", h.claimNext)
 	v1.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "not_found", "no route for "+r.Method+" "+r.URL.Path, nil)
 	})
@@ -197,6 +207,12 @@ func (h handlers) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusConflict, "outputs_pending", err.Error(), nil)
 	case errors.Is(err, work.ErrNoOutputs):
 		writeError(w, r, http.StatusConflict, "no_outputs", err.Error(), nil)
+	case errors.Is(err, lease.ErrNotClaimant):
+		writeError(w, r, http.StatusConflict, "not_claimant", err.Error(), nil)
+	case errors.Is(err, lease.ErrExpired):
+		writeError(w, r, http.StatusConflict, "lease_expired", err.Error(), nil)
+	case errors.Is(err, work.ErrWorkerNotActive):
+		writeError(w, r, http.StatusConflict, "worker_not_active", err.Error(), nil)
 	case errors.Is(err, work.ErrOutputConflict):
 		writeError(w, r, http.StatusConflict, "output_conflict", err.Error(), nil)
 	default:

@@ -19,6 +19,7 @@ type enqueueRequest struct {
 	State       string   `json:"state"`
 	Priority    int32    `json:"priority"`
 	BlockedBy   []string `json:"blocked_by"`
+	Requires    []string `json:"requires"`
 }
 
 // enqueue is POST /api/v1/work, the by-value form of #18: 201 for a new
@@ -33,7 +34,7 @@ func (h handlers) enqueue(w http.ResponseWriter, r *http.Request) {
 		Source: req.Source, ExternalID: req.ExternalID, ExternalURL: req.ExternalURL,
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 		Title:          req.Title, Body: req.Body, Repos: req.Repos, State: req.State, Priority: req.Priority,
-		BlockedBy: req.BlockedBy,
+		BlockedBy: req.BlockedBy, Requires: req.Requires,
 	}, apiActor())
 	if err != nil {
 		// An unknown blocked_by is a problem with the request, not a missing route.
@@ -53,7 +54,7 @@ func (h handlers) enqueue(w http.ResponseWriter, r *http.Request) {
 
 func (h handlers) listWork(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := work.Filter{State: q.Get("state"), Source: q.Get("source"), Repo: q.Get("repo"), Cursor: q.Get("cursor")}
+	f := work.Filter{State: q.Get("state"), Source: q.Get("source"), Repo: q.Get("repo"), ClaimedBy: q.Get("claimed_by"), Cursor: q.Get("cursor")}
 	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {

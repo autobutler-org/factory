@@ -25,7 +25,14 @@ to have yours used instead.
 | `PUT /api/v1/work/{id}/dependencies/{blocked_by_id}` | | `204` |
 | `DELETE /api/v1/work/{id}/dependencies/{blocked_by_id}` | | `204` |
 
-States and transition rules are in [architecture/work.md](architecture/work.md).
+`GET /api/v1/work` also filters on `claimed_by=<worker id>`. States and transition rules are in
+[architecture/work.md](architecture/work.md).
+
+## Workers
+
+Registration, claims, heartbeats, stage and result reports, and output recording are specified in
+[architecture/workers.md](architecture/workers.md#http-contract), with the error codes workers handle
+(`not_claimant`, `lease_expired`, `worker_not_active`).
 
 ### Enqueueing work
 
@@ -41,11 +48,12 @@ States and transition rules are in [architecture/work.md](architecture/work.md).
   "repos": ["autobutler-org/quark"],
   "state": "ready",
   "priority": 0,
-  "blocked_by": ["<work item id or source:external_id>"]
+  "blocked_by": ["<work item id or source:external_id>"],
+  "requires": ["claude"]
 }
 ```
 
-Only `title` is required. `state` is `design` or `ready` (default `ready`). Unknown fields are refused.
+Only `title` is required. `requires` lists the capabilities a worker needs to be handed the item. `state` is `design` or `ready` (default `ready`). Unknown fields are refused.
 Enqueueing an existing `(source, external_id)` returns that item with `200`, refreshing title and body only while
 it is in `design` or `ready`; it never changes the item's state. For work with no `source`, send an
 `Idempotency-Key` header: a repeat with the same key returns the first item and creates nothing. The response is:
