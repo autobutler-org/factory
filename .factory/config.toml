@@ -1,0 +1,15 @@
+# How the factory works on this repository (docs/architecture/worker.md).
+
+# What CI's check workflow runs. The database and end-to-end tests need
+# Postgres, which a worker sandbox does not have; CI runs those on the pull request.
+gate = "make check"
+
+# Measured in ghcr.io/autobutler-org/factory-worker:v0.1.2 on 4 CPUs: about
+# 6 minutes with an empty module and build cache.
+gate_timeout = "20m"
+
+# A person approves and merges every pull request.
+require_approval = true
+
+[automate]
+merge = "off"
