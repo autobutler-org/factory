@@ -57,6 +57,24 @@ launcher:
 
 workers:
   namespace: factory-workers
+  egress:
+    # Helm replaces lists, so this repeats the chart's defaults (GitHub and the model API) and adds the package
+    # registries a gate downloads from. The gate's HOME is empty on every run, so nothing is cached between runs.
+    # One list for every repository's workers.
+    fqdns:
+      - github.com
+      - api.github.com
+      - codeload.github.com
+      - "*.githubusercontent.com"
+      - api.anthropic.com
+      # Dart and Flutter packages and SDK artifacts.
+      - pub.dev
+      - storage.googleapis.com
+      # Go modules.
+      - proxy.golang.org
+      # npm packages and Node headers.
+      - registry.npmjs.org
+      - nodejs.org
 
 # The cluster's CNI is Cilium with FQDN egress policy available.
 networkPolicy:
