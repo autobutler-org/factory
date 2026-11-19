@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/autobutler-org/factory/internal/db"
 	"github.com/autobutler-org/factory/internal/lease"
@@ -91,7 +92,9 @@ func active(state string) bool { return state == InProgress || state == InReview
 
 // ClaimStep hands the worker the next step it may run: the highest-priority
 // item first, never a wait step, never a step whose sandbox already has one
-// running. With sandboxKey set, only that sandbox's steps. When no planned
+// running. With sandboxKey set, only that sandbox's steps, and the claim
+// waits for the chain's item lock instead of skipping the item, so ok false
+// means the chain has nothing ready. When no planned
 // step is ready, it takes the next ready item, plans it and moves it to
 // in_progress. ok is false when there is nothing to hand out.
 func (s *Service) ClaimStep(ctx context.Context, workerID, sandboxKey string) (claim StepClaim, ok bool, err error) {
@@ -103,6 +106,15 @@ func (s *Service) ClaimStep(ctx context.Context, workerID, sandboxKey string) (c
 		var caps Capabilities
 		if err := json.Unmarshal(w.Capabilities, &caps); err != nil {
 			return fmt.Errorf("decode capabilities of worker %s: %w", workerID, err)
+		}
+		// A sandbox's chain belongs to one item. Wait for that item's lock
+		// rather than let PickStep skip it: the launcher locks it on every
+		// pass, and a skipped item would look like a finished chain, so the
+		// worker would exit with a step still to run.
+		if itemID, _, _ := strings.Cut(sandboxKey, "/"); sandboxKey != "" && uuidPattern.MatchString(itemID) {
+			if _, err := q.GetItemForUpdate(ctx, itemID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("lock %s: %w", itemID, err)
+			}
 		}
 		// Each pass either claims, finds nothing, moves one item out of
 		// ready, or puts one off until the code host answers, so the loop

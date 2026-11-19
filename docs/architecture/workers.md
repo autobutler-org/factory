@@ -46,6 +46,8 @@ sequenceDiagram
    step whose sandbox already has a step running, never a step waiting out a retry delay. When no planned step is
    ready, the claim takes the next `ready` item, plans it and moves it to `in_progress`. A sandbox started for one
    chain sends `{"sandbox_key": "<its key>"}` and is handed only that chain's steps, and never plans a new item.
+   Such a claim waits for the chain's item lock instead of skipping a locked item, so `204` means the chain has no
+   ready step, not that something else held its item for a moment (the launcher locks it on every pass).
 3. **Heartbeat** at least every `lease_seconds / 3`. `held` lists every step (and item) the worker still holds.
    **A step missing from `held` has been lost (its lease expired, or the item was replanned, blocked or taken
    locally): stop working on it and do not report on it.**

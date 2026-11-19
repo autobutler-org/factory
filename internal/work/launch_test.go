@@ -173,3 +173,55 @@ func TestClaimServerStep(t *testing.T) {
 		t.Errorf("events: %v", types)
 	}
 }
+
+// A sandbox's claim must wait for its item's lock, not skip the item: the
+// launcher locks the item of every chain with a running step on each pass
+// (EndIdleSandbox), and a worker that took a skipped item for an empty chain
+// exited with a step still to run (#34).
+func TestSandboxClaimWaitsForTheItemLock(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	w := register(t, svc, "w")
+	item := mustCreate(t, svc, work.NewItem{Title: "t", Repos: []string{"o/a"}})
+	if _, err := svc.StartReady(ctx, launched, 1); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT 1 FROM work_items WHERE id = $1 FOR UPDATE", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	var holder int32
+	if err := tx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&holder); err != nil {
+		t.Fatal(err)
+	}
+
+	type result struct {
+		ok  bool
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, ok, err := svc.ClaimStep(ctx, w.ID, item.ID+"/o/a")
+		done <- result{ok, err}
+	}()
+	for waiting := false; !waiting; {
+		select {
+		case r := <-done:
+			t.Fatalf("the claim returned (ok %v, err %v) while another transaction held the item's lock", r.ok, r.err)
+		default:
+		}
+		if err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY (pg_blocking_pids(pid)))", holder).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-done; r.err != nil || !r.ok {
+		t.Fatalf("claim after the lock was released = %v, %v; want the ready step", r.ok, r.err)
+	}
+}
