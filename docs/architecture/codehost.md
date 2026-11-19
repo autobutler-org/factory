@@ -41,6 +41,7 @@ server for tests.
 | `MergePull(number)` | Merges with a merge commit. |
 | `Protection(branch)` | Required approving reviews; an unprotected branch, or a token without Administration read, is no protection. |
 | `RetargetPull(number, base)` | Changes the base, as when the pull request below a stacked one merges. |
+| `ReadFile(branch, path)` | One file at the commit the branch points at, with that commit's SHA, or `ErrFileNotFound`. The server reads `.factory/config.toml` with it when it plans an item. |
 
 `codehost.GitHub` also has `RevokeToken`, which ends an installation token before it expires.
 
@@ -83,6 +84,9 @@ sequenceDiagram
     Note over W: RefreshingToken asks again 5 minutes before expiry
     W->>GH: DELETE /installation/token when the work ends
 ```
+
+The server also mints a token for itself, outside this flow: when it plans an item it reads each repository's
+`.factory/config.toml` with one (`work.Configs`), and the launcher merges with one.
 
 The rule is a service function, `work.Service.RepoToken`. A token for repository R of item I is minted only for a
 worker that holds either:

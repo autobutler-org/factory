@@ -145,6 +145,15 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return db.CheckMigrated(ctx, pool)
 	}
 	svc := work.New(pool).WithPolicy(policy)
+	codeHost := githubHost(mintToken, *githubAPI)
+	if codeHost != nil {
+		// With a GitHub App the server plans each item with its
+		// repositories' .factory/config.toml; without one, with defaults.
+		svc = svc.WithConfigs(work.Configs{Host: codeHost, AllowedImages: splitList(*launch.allowedImages)})
+	} else {
+		logger.Warn("no GitHub App is configured: items are planned with default repository settings, " +
+			"not their .factory/config.toml. Set --github-app-id and --github-app-key-file to read it")
+	}
 	srv := &http.Server{
 		Handler:           api.New(api.Config{Work: svc, Ready: ready, Token: token, Logger: logger, MintToken: mintToken}),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -173,14 +182,14 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	// The server's own worker runs server-side steps only with the
 	// launcher on, so a server without it behaves as before.
 	if jobs != nil {
-		l := launch.newLauncher(jobs, svc, pool, mintToken, *githubAPI, logger)
+		l := launch.newLauncher(jobs, svc, pool, codeHost, logger)
 		launcherDone := make(chan struct{})
 		go func() {
 			defer close(launcherDone)
 			l.Run(ctx, launcherInterval)
 		}()
 		defer func() { <-launcherDone }()
-		logger.Info("launcher on", "namespace", jobsConfig.Namespace, "image", jobsConfig.Image, "max_sandboxes", *launch.maxSandboxes)
+		logger.Info("launcher on", "namespace", jobsConfig.Namespace, "image", jobsConfig.Image, "allowed_images", *launch.allowedImages, "max_sandboxes", *launch.maxSandboxes)
 	}
 
 	served := make(chan error, 1)

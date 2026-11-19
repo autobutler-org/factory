@@ -46,14 +46,14 @@ func (f *Fake) SetCreated(name string, created time.Time) {
 }
 
 // Ensure implements Runtime.
-func (f *Fake) Ensure(_ context.Context, name, key string) (Sandbox, error) {
+func (f *Fake) Ensure(_ context.Context, name, key, image string) (Sandbox, error) {
 	if name == "" {
 		return Sandbox{}, errors.New("ensure sandbox: name is empty")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.sandboxes[name]; !ok {
-		f.sandboxes[name] = Sandbox{Name: name, Key: key, Phase: PhasePending, Created: time.Now()}
+		f.sandboxes[name] = Sandbox{Name: name, Key: key, Image: image, Phase: PhasePending, Created: time.Now()}
 	}
 	return f.sandboxes[name], nil
 }

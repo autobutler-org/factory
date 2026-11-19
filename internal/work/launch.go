@@ -17,15 +17,18 @@ var launcher = Actor{Kind: ActorSystem, ID: "launcher"}
 
 // StartReady takes up to limit ready items, highest priority first, whose
 // requirements are all among capabilities, plans each and moves it to
-// in_progress, as an unrestricted claim would. It returns how many it took.
+// in_progress, as an unrestricted claim would, or blocks it when a
+// repository's config cannot be used. It returns how many it took. An item
+// whose configs cannot be read now stays ready and does not count.
 // A sandbox started for one chain never plans an item, so the server's
 // launcher calls this before it starts sandboxes for the new chains.
 func (s *Service) StartReady(ctx context.Context, capabilities []string, limit int) (int, error) {
 	taken := 0
+	deferred := []string{}
 	for taken < limit {
 		done := false
 		err := s.inTx(ctx, func(q *db.Queries) error {
-			id, err := q.PickNext(ctx, capabilities)
+			id, err := q.PickNext(ctx, db.PickNextParams{Skip: deferred, Capabilities: capabilities})
 			if errors.Is(err, pgx.ErrNoRows) {
 				done = true
 				return nil
@@ -37,12 +40,17 @@ func (s *Service) StartReady(ctx context.Context, capabilities []string, limit i
 			if err != nil {
 				return fmt.Errorf("lock %s: %w", id, err)
 			}
-			return s.start(ctx, q, item, launcher)
+			putOff, err := s.start(ctx, q, item, launcher)
+			if putOff {
+				deferred = append(deferred, id)
+			} else {
+				taken++
+			}
+			return err
 		})
 		if err != nil || done {
 			return taken, err
 		}
-		taken++
 	}
 	return taken, nil
 }

@@ -5,7 +5,10 @@
 //
 // It also stores each item's step graph (planned by internal/plan), leases
 // steps to workers, schedules the steps that follow, and derives the item's
-// state from its graph. See docs/architecture/graph.md. For the server's
+// state from its graph. See docs/architecture/graph.md. When it plans an
+// item it reads each repository's .factory/config.toml through the code host
+// (WithConfigs) and checks the image it names; without that it plans with
+// defaults. For the server's
 // launcher it plans ready items (StartReady), lists the chains that need a
 // sandbox (RunnableSandboxes), ends a sandbox only when its chain is done
 // (EndIdleSandbox), and hands the server the steps that need no sandbox
@@ -158,6 +161,9 @@ type Actor struct {
 type Service struct {
 	pool   *pgxpool.Pool
 	policy lease.Policy
+	// configs reads repositories' configs at plan time; nil plans with
+	// defaults.
+	configs *Configs
 }
 
 // New returns a Service backed by pool with lease.DefaultPolicy.
@@ -167,7 +173,9 @@ func New(pool *pgxpool.Pool) *Service {
 
 // WithPolicy returns a copy of s that leases work with p.
 func (s *Service) WithPolicy(p lease.Policy) *Service {
-	return &Service{pool: s.pool, policy: p}
+	out := *s
+	out.policy = p
+	return &out
 }
 
 // NewItem is a work item to create or upsert. Source and ExternalID are both

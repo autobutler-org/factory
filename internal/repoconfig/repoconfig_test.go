@@ -17,7 +17,7 @@ func TestParseDefaults(t *testing.T) {
 	}
 	want := Config{Gate: "make check", GateTimeout: DefaultGateTimeout, SessionTimeout: DefaultSessionTimeout, ReviewRounds: 3, Merge: true}
 	if cfg.Gate != want.Gate || cfg.GateTimeout != want.GateTimeout || cfg.SessionTimeout != want.SessionTimeout ||
-		cfg.ReviewRounds != want.ReviewRounds || cfg.Merge != want.Merge || cfg.RequireApproval || cfg.After != nil {
+		cfg.ReviewRounds != want.ReviewRounds || cfg.Merge != want.Merge || cfg.RequireApproval || cfg.After != nil || cfg.Image != "" {
 		t.Errorf("Parse = %+v, want %+v", cfg, want)
 	}
 	if got, def := cfg.Plan(), plan.DefaultRepoConfig(); got.ReviewRounds != def.ReviewRounds || got.Merge != def.Merge || got.RequireApproval != def.RequireApproval {
@@ -33,6 +33,7 @@ session_timeout = "45m"
 review_rounds = 0
 require_approval = true
 after = ["o/a"]
+image = "ghcr.io/autobutler-org/quark-worker:1.2"
 
 [automate]
 merge = "off"
@@ -41,10 +42,11 @@ merge = "off"
 		t.Fatal(err)
 	}
 	if cfg.Gate != "make check test" || cfg.GateTimeout != 5*time.Minute || cfg.SessionTimeout != 45*time.Minute ||
-		cfg.ReviewRounds != 0 || !cfg.RequireApproval || cfg.Merge || !slices.Equal(cfg.After, []string{"o/a"}) {
+		cfg.ReviewRounds != 0 || !cfg.RequireApproval || cfg.Merge || !slices.Equal(cfg.After, []string{"o/a"}) ||
+		cfg.Image != "ghcr.io/autobutler-org/quark-worker:1.2" {
 		t.Errorf("Parse = %+v", cfg)
 	}
-	if p := cfg.Plan(); p.ReviewRounds != 0 || !p.RequireApproval || p.Merge || !slices.Equal(p.After, []string{"o/a"}) {
+	if p := cfg.Plan(); p.ReviewRounds != 0 || !p.RequireApproval || p.Merge || !slices.Equal(p.After, []string{"o/a"}) || p.Image != cfg.Image {
 		t.Errorf("Plan() = %+v", p)
 	}
 }
@@ -62,6 +64,8 @@ func TestParseRejects(t *testing.T) {
 		{"bad duration", "gate = \"x\"\ngate_timeout = \"soon\"", `gate_timeout = "soon" is not a positive duration`},
 		{"zero duration", "gate = \"x\"\nsession_timeout = \"0s\"", "session_timeout"},
 		{"negative rounds", "gate = \"x\"\nreview_rounds = -1", "must not be negative"},
+		{"blank image", "gate = \"x\"\nimage = \" \"", "is empty or not one image reference"},
+		{"image with spaces", "gate = \"x\"\nimage = \"ghcr.io/o/x:1 y\"", "image"},
 		{"bad switch", "gate = \"x\"\n[automate]\nmerge = \"yes\"", `automate.merge = "yes" is not a legal value`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

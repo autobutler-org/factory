@@ -7,7 +7,9 @@
 //  2. plans ready items while there is room under the sandbox cap, since a
 //     sandbox's worker claims only its own chain and never plans an item;
 //  3. starts one sandbox for every chain (sandbox key) with a runnable step
-//     and no live sandbox, up to the cap (sandbox.Reconcile);
+//     and no live sandbox, up to the cap (sandbox.Reconcile), in the image
+//     the chain's repository names when AllowedImages allows it, or the
+//     runtime's default; a chain whose image is not allowed blocks its item;
 //  4. destroys a live sandbox only when its chain has no step left to run,
 //     under the item's lock (work.Service.EndIdleSandbox), and one that has
 //     stayed pending past PendingTimeout, whose worker never started.
@@ -52,6 +54,10 @@ type Launcher struct {
 	// Host returns the code host for a repository, for server-side steps.
 	// Nil means no GitHub App is configured: server-side steps stay ready.
 	Host func(ctx context.Context, repo string) (codehost.Host, error)
+	// AllowedImages are the image repository prefixes a chain's sandbox may
+	// run instead of the runtime's default (sandbox.AllowImage). The image is
+	// checked when the item is planned and again here, before it runs.
+	AllowedImages []string
 	// PendingTimeout is how long a sandbox may stay pending (an image that
 	// will not pull, a pod that cannot be scheduled) before it is destroyed
 	// and its chain gets a new one. Zero never times one out. A pending
@@ -122,7 +128,19 @@ func (l *Launcher) pass(ctx context.Context) (Report, error) {
 		}
 	}
 	for _, key := range p.Start {
-		sb, err := l.Runtime.Ensure(ctx, sandboxName(), key)
+		image, err := l.Work.SandboxImage(ctx, key)
+		if err != nil {
+			return r, err
+		}
+		if image != "" {
+			if err := sandbox.AllowImage(image, l.AllowedImages); err != nil {
+				if err := l.block(ctx, key, err); err != nil {
+					return r, err
+				}
+				continue
+			}
+		}
+		sb, err := l.Runtime.Ensure(ctx, sandboxName(), key, image)
 		if err != nil {
 			return r, fmt.Errorf("start a sandbox for %s: %w", key, err)
 		}
@@ -138,6 +156,18 @@ func (l *Launcher) pass(ctx context.Context) (Report, error) {
 		}
 	}
 	return r, nil
+}
+
+// block moves the item of the chain with the given sandbox key to blocked, because
+// the image its repository names may not run here.
+func (l *Launcher) block(ctx context.Context, key string, why error) error {
+	itemID, repo, _ := strings.Cut(key, "/")
+	reason := fmt.Sprintf("%s: %v", repo, why)
+	if _, err := l.Work.Transition(ctx, itemID, work.Blocked, reason, work.Actor{Kind: work.ActorSystem, ID: "launcher"}); err != nil {
+		return fmt.Errorf("block %s: %w", itemID, err)
+	}
+	l.Logger.Warn("blocked an item: its repository's image is not allowed", "sandbox_key", key, "reason", reason)
+	return nil
 }
 
 // dropStuckPending destroys the sandboxes pending for longer than

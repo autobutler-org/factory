@@ -5,8 +5,9 @@
 //
 // It defines the Runtime interface, an in-memory Fake for tests, Jobs (the
 // Kubernetes Job implementation chosen in docs/decisions/0001-agent-runtime.md),
-// and Reconcile, which decides which chains of steps get a sandbox and which
-// sandboxes may stop. One sandbox serves one chain: the steps of one work
+// Reconcile, which decides which chains of steps get a sandbox and which
+// sandboxes may stop, and AllowImage, which says whether a sandbox may run
+// the image a repository asks for. One sandbox serves one chain: the steps of one work
 // item and repository that share a working tree (their sandbox key).
 //
 // It does not claim work, pick which work item a sandbox runs, authorize
@@ -58,6 +59,8 @@ type Sandbox struct {
 	// (`<item id>/<repo>`, docs/architecture/graph.md); its worker claims
 	// only that chain's steps.
 	Key string
+	// Image is the image the sandbox's worker runs in.
+	Image string
 	// Phase is its current phase.
 	Phase Phase
 	// Created is when the sandbox was created.
@@ -77,9 +80,10 @@ type ExecRequest struct {
 // Runtime is what factory needs from the system that runs worker sandboxes.
 type Runtime interface {
 	// Ensure creates the named sandbox, serving the chain whose sandbox key
-	// is key, if it does not exist, and returns its state. Ensuring an existing sandbox
-	// changes nothing.
-	Ensure(ctx context.Context, name, key string) (Sandbox, error)
+	// is key and running image (empty means the runtime's default image),
+	// if it does not exist, and returns its state. Ensuring an existing
+	// sandbox changes nothing. The caller checks the image is allowed.
+	Ensure(ctx context.Context, name, key, image string) (Sandbox, error)
 	// Status returns the named sandbox's state, or ErrNotFound.
 	Status(ctx context.Context, name string) (Sandbox, error)
 	// List returns every sandbox this runtime manages, in name order.

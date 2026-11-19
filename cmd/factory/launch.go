@@ -31,6 +31,12 @@ Launcher (starts worker sandboxes as Kubernetes Jobs; needs in-cluster config):
                        worker image; required with --launcher
   --launcher-server-url URL
                        where workers reach this server; required with --launcher
+  --launcher-allowed-images LIST
+                       comma-separated image repository prefixes, such as
+                       ghcr.io/autobutler-org/, a repository's image (image in
+                       .factory/config.toml) may come from; a prefix without a
+                       trailing / is one repository. Empty lets no repository
+                       choose its image (default empty)
   --launcher-max-sandboxes N
                        most worker sandboxes alive at once (default 4)
   --launcher-pending-timeout DURATION
@@ -65,6 +71,7 @@ Launcher (starts worker sandboxes as Kubernetes Jobs; needs in-cluster config):
 type launcherFlags struct {
 	enabled                                   *bool
 	namespace, image, serverURL               *string
+	allowedImages                             *string
 	maxSandboxes                              *int
 	pendingTimeout                            *time.Duration
 	capabilities, serviceAccount              *string
@@ -79,6 +86,7 @@ func addLauncherFlags(fs *flag.FlagSet) launcherFlags {
 		namespace:      fs.String("launcher-namespace", "factory-workers", ""),
 		image:          fs.String("launcher-image", "", ""),
 		serverURL:      fs.String("launcher-server-url", "", ""),
+		allowedImages:  fs.String("launcher-allowed-images", "", ""),
 		maxSandboxes:   fs.Int("launcher-max-sandboxes", 4, ""),
 		pendingTimeout: fs.Duration("launcher-pending-timeout", 10*time.Minute, ""),
 		capabilities:   fs.String("launcher-capabilities", "claude-code", ""),
@@ -163,21 +171,27 @@ func newJobs(cfg sandbox.JobsConfig) (*sandbox.Jobs, error) {
 	return sandbox.NewJobs(client, restConfig, cfg)
 }
 
-// newLauncher builds the launcher. The code host for server-side steps
-// comes from mintToken, which is nil without a GitHub App.
-func (f launcherFlags) newLauncher(rt sandbox.Runtime, svc *work.Service, pool *pgxpool.Pool, mintToken func(context.Context, string) (codehost.Token, error), githubAPI string, logger *slog.Logger) *launcher.Launcher {
-	l := &launcher.Launcher{
-		Work: svc, Pool: pool, Runtime: rt, MaxSandboxes: *f.maxSandboxes,
-		Capabilities: splitList(*f.capabilities), PendingTimeout: *f.pendingTimeout, Logger: logger,
+// newLauncher builds the launcher. host, the code host for server-side
+// steps, is nil without a GitHub App.
+func (f launcherFlags) newLauncher(rt sandbox.Runtime, svc *work.Service, pool *pgxpool.Pool, host func(context.Context, string) (codehost.Host, error), logger *slog.Logger) *launcher.Launcher {
+	return &launcher.Launcher{
+		Work: svc, Pool: pool, Runtime: rt, MaxSandboxes: *f.maxSandboxes, Host: host,
+		Capabilities: splitList(*f.capabilities), AllowedImages: splitList(*f.allowedImages),
+		PendingTimeout: *f.pendingTimeout, Logger: logger,
 	}
-	if mintToken != nil {
-		l.Host = func(ctx context.Context, repo string) (codehost.Host, error) {
-			token, err := mintToken(ctx, repo)
-			if err != nil {
-				return nil, err
-			}
-			return codehost.GitHub{API: githubAPI, Repo: repo, Token: token.Token}, nil
+}
+
+// githubHost returns the code host for a repository, with a token minted for
+// it, or nil when mintToken is (no GitHub App).
+func githubHost(mintToken func(context.Context, string) (codehost.Token, error), githubAPI string) func(context.Context, string) (codehost.Host, error) {
+	if mintToken == nil {
+		return nil
+	}
+	return func(ctx context.Context, repo string) (codehost.Host, error) {
+		token, err := mintToken(ctx, repo)
+		if err != nil {
+			return nil, err
 		}
+		return codehost.GitHub{API: githubAPI, Repo: repo, Token: token.Token}, nil
 	}
-	return l
 }

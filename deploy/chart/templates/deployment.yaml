@@ -78,6 +78,11 @@ spec:
             {{- end }}
             - name: FACTORY_LAUNCHER
               value: {{ .Values.launcher.enabled | quote }}
+            {{- with .Values.launcher.allowedImages }}
+            # Read when planning too, so it is set with the launcher off.
+            - name: FACTORY_LAUNCHER_ALLOWED_IMAGES
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- if .Values.launcher.enabled }}
             - name: FACTORY_LAUNCHER_NAMESPACE
               value: {{ .Values.workers.namespace | quote }}

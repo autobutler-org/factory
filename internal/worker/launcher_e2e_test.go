@@ -16,6 +16,7 @@ import (
 	"github.com/autobutler-org/factory/internal/harness"
 	"github.com/autobutler-org/factory/internal/launcher"
 	"github.com/autobutler-org/factory/internal/sandbox"
+	"github.com/autobutler-org/factory/internal/work"
 	"github.com/autobutler-org/factory/internal/worker"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -87,11 +88,22 @@ func (c *cluster) create(action k8stesting.Action) (bool, runtime.Object, error)
 }
 
 // TestE2ELauncherStartsTheWorker runs one item from enqueued to a recorded
-// pull request with nothing but launcher passes: the launcher plans it,
-// starts its chain's sandbox as a Job, and the real worker in that sandbox
-// claims only that chain's steps until the chain waits on checks.
+// pull request with nothing but launcher passes: the launcher reads the
+// repository's .factory/config.toml through fakegh and plans it with one
+// review round, starts its chain's sandbox as a Job in the image the config
+// names, and the real worker in that sandbox claims only that chain's steps
+// until the chain waits on checks.
 func TestE2ELauncherStartsTheWorker(t *testing.T) {
 	e := newEnv(t, "test -f hello.txt && touch MARKER", 3)
+	const quarkImage = "ghcr.io/autobutler-org/quark-worker:1.4.0"
+	allowed := []string{"ghcr.io/autobutler-org/"}
+	e.gh.SetFile(".factory/config.toml", e.config+"review_rounds = 1\nimage = \""+quarkImage+"\"\n")
+	svc := e.svc.WithConfigs(work.Configs{
+		Host: func(_ context.Context, repo string) (codehost.Host, error) {
+			return codehost.GitHub{API: e.gh.URL, Repo: repo, Token: ghToken}, nil
+		},
+		AllowedImages: allowed,
+	})
 	c := &cluster{e: e, client: fake.NewClientset()}
 	c.client.PrependReactor("create", "jobs", c.create)
 	jobs, err := sandbox.NewJobs(c.client, &rest.Config{Host: "https://kube.test"}, sandbox.JobsConfig{
@@ -102,7 +114,7 @@ func TestE2ELauncherStartsTheWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &launcher.Launcher{
-		Work: e.svc, Pool: e.pool, Runtime: jobs, MaxSandboxes: 2, Capabilities: []string{"claude-code"},
+		Work: svc, Pool: e.pool, Runtime: jobs, MaxSandboxes: 2, Capabilities: []string{"claude-code"}, AllowedImages: allowed,
 		PendingTimeout: 10 * time.Minute, Logger: slog.New(slog.NewTextHandler(t.Output(), nil)),
 	}
 
@@ -132,6 +144,18 @@ func TestE2ELauncherStartsTheWorker(t *testing.T) {
 		t.Fatalf("Jobs created = %d, want one sandbox for the one chain", len(c.jobs))
 	}
 	job := c.jobs[0]
+	if image := job.Spec.Template.Spec.Containers[0].Image; image != quarkImage {
+		t.Errorf("Job image = %s, want the repository's %s", image, quarkImage)
+	}
+	g, err := e.svc.Graph(t.Context(), e.item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range g.Steps {
+		if strings.HasPrefix(s.Key, repo+"/review-") && s.Key != repo+"/review-1" || strings.HasPrefix(s.Key, repo+"/fix-") && !strings.Contains(s.Key, "checks") {
+			t.Errorf("review_rounds = 1, but the graph has %s", s.Key)
+		}
+	}
 	envs := map[string]string{}
 	for _, v := range job.Spec.Template.Spec.Containers[0].Env {
 		envs[v.Name] = v.Value

@@ -222,3 +222,44 @@ func TestReadTailKeepsTheEnd(t *testing.T) {
 		}
 	}
 }
+
+// TestReadFile reads a file at the commit the branch points at, and tells a
+// missing file from other failures.
+func TestReadFile(t *testing.T) {
+	s, g := newGitHub(t)
+	s.SetFile(".factory/config.toml", "gate = \"make check\"\n")
+	f, err := g.ReadFile(t.Context(), "main", ".factory/config.toml")
+	if err != nil || string(f.Content) != "gate = \"make check\"\n" || f.Commit != fakegh.HeadSHA {
+		t.Fatalf("ReadFile = %+v, %v; want the content at %s", f, err, fakegh.HeadSHA)
+	}
+	if !slices.Contains(s.Calls(), "GET /repos/"+testRepo+"/contents/.factory/config.toml") {
+		t.Errorf("calls = %v, want the contents endpoint", s.Calls())
+	}
+	if _, err := g.ReadFile(t.Context(), "main", "missing.toml"); !errors.Is(err, ErrFileNotFound) {
+		t.Errorf("ReadFile of a missing file = %v, want ErrFileNotFound", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+	_, err = (GitHub{API: srv.URL, Repo: testRepo, Token: testToken}).ReadFile(t.Context(), "main", ".factory/config.toml")
+	if err == nil || errors.Is(err, ErrFileNotFound) {
+		t.Errorf("ReadFile on a 502 = %v, want a failure that is not ErrFileNotFound", err)
+	}
+}
+
+func TestFakeReadFile(t *testing.T) {
+	f := &Fake{Files: map[string]string{"a.toml": "x"}}
+	got, err := f.ReadFile(t.Context(), "main", "a.toml")
+	if err != nil || string(got.Content) != "x" || got.Commit == "" {
+		t.Errorf("ReadFile = %+v, %v", got, err)
+	}
+	if _, err := f.ReadFile(t.Context(), "main", "b.toml"); !errors.Is(err, ErrFileNotFound) {
+		t.Errorf("ReadFile of a missing file = %v, want ErrFileNotFound", err)
+	}
+	f.ReadErr = errors.New("down")
+	if _, err := f.ReadFile(t.Context(), "main", "a.toml"); err == nil || errors.Is(err, ErrFileNotFound) {
+		t.Errorf("ReadFile with ReadErr = %v", err)
+	}
+}

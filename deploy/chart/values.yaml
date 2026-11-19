@@ -105,6 +105,14 @@ launcher:
   # neither planned nor given a sandbox.
   capabilities:
     - claude-code
+  # Image repository prefixes a repository may pick its worker image from (`image` in its
+  # .factory/config.toml), rendered into FACTORY_LAUNCHER_ALLOWED_IMAGES. A prefix ending in `/` allows every
+  # repository under it; one without allows that repository only. Empty lets no repository choose: an item
+  # whose repository names an image is blocked. The server checks it when it plans an item and again before
+  # it starts the Job.
+  #   allowedImages:
+  #     - ghcr.io/example-org/
+  allowedImages: []
   # Node placement for worker pods, rendered into FACTORY_LAUNCHER_NODE_SELECTOR and
   # FACTORY_LAUNCHER_TOLERATIONS. A toleration with a value uses operator Equal; without one, Exists.
   #   nodeSelector:

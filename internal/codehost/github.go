@@ -3,6 +3,7 @@ package codehost
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -243,7 +244,7 @@ func (g GitHub) Protection(ctx context.Context, branch string) (Protection, erro
 			Count int `json:"required_approving_review_count"`
 		} `json:"required_pull_request_reviews"`
 	}
-	endpoint := "/branches/" + strings.ReplaceAll(url.PathEscape(branch), "%2F", "/") + "/protection"
+	endpoint := "/branches/" + escapePath(branch) + "/protection"
 	err := g.do(ctx, http.MethodGet, endpoint, nil, &resp)
 	var status *statusError
 	if errors.As(err, &status) && (status.code == http.StatusNotFound || status.code == http.StatusForbidden) {
@@ -254,6 +255,43 @@ func (g GitHub) Protection(ctx context.Context, branch string) (Protection, erro
 	}
 	return Protection{RequiredApprovals: resp.Reviews.Count}, nil
 }
+
+// ReadFile resolves branch to its commit, then reads path at that commit
+// through the contents API, so the content and the commit match. A 404 on
+// the contents is ErrFileNotFound.
+func (g GitHub) ReadFile(ctx context.Context, branch, path string) (File, error) {
+	var b struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if err := g.do(ctx, http.MethodGet, "/branches/"+escapePath(branch), nil, &b); err != nil {
+		return File{}, err
+	}
+	var c struct {
+		Encoding string `json:"encoding"`
+		Content  string `json:"content"`
+	}
+	err := g.do(ctx, http.MethodGet, "/contents/"+escapePath(path)+"?ref="+url.QueryEscape(b.Commit.SHA), nil, &c)
+	var status *statusError
+	if errors.As(err, &status) && status.code == http.StatusNotFound {
+		return File{}, fmt.Errorf("%s at %s (%s): %w", path, branch, b.Commit.SHA, ErrFileNotFound)
+	}
+	if err != nil {
+		return File{}, err
+	}
+	if c.Encoding != "base64" {
+		return File{}, fmt.Errorf("github contents of %s: encoding %q, want base64 (is it larger than 1 MB?)", path, c.Encoding)
+	}
+	content, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(c.Content, "\n", ""))
+	if err != nil {
+		return File{}, fmt.Errorf("github contents of %s: %w", path, err)
+	}
+	return File{Content: content, Commit: b.Commit.SHA}, nil
+}
+
+// escapePath escapes each segment of a slash-separated path for a URL.
+func escapePath(p string) string { return strings.ReplaceAll(url.PathEscape(p), "%2F", "/") }
 
 func (g GitHub) RetargetPull(ctx context.Context, number int, base string) error {
 	return g.do(ctx, http.MethodPatch, fmt.Sprintf("/pulls/%d", number), map[string]string{"base": base}, nil)

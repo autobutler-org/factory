@@ -104,8 +104,10 @@ func (s *Service) ClaimStep(ctx context.Context, workerID, sandboxKey string) (c
 		if err := json.Unmarshal(w.Capabilities, &caps); err != nil {
 			return fmt.Errorf("decode capabilities of worker %s: %w", workerID, err)
 		}
-		// Each pass either claims, finds nothing, or moves one item out of
-		// ready, so the loop ends.
+		// Each pass either claims, finds nothing, moves one item out of
+		// ready, or puts one off until the code host answers, so the loop
+		// ends.
+		deferred := []string{}
 		for {
 			row, err := q.PickStep(ctx, db.PickStepParams{WaitKinds: plan.WaitKinds(), Capabilities: caps.all(), SandboxKey: nilIfEmpty(sandboxKey)})
 			if err == nil {
@@ -122,7 +124,7 @@ func (s *Service) ClaimStep(ctx context.Context, workerID, sandboxKey string) (c
 			if sandboxKey != "" {
 				return nil
 			}
-			id, err := q.PickNext(ctx, caps.all())
+			id, err := q.PickNext(ctx, db.PickNextParams{Skip: deferred, Capabilities: caps.all()})
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
@@ -133,36 +135,58 @@ func (s *Service) ClaimStep(ctx context.Context, workerID, sandboxKey string) (c
 			if err != nil {
 				return fmt.Errorf("lock %s: %w", id, err)
 			}
-			if err := s.start(ctx, q, item, Actor{Kind: ActorWorker, ID: workerID}); err != nil {
+			putOff, err := s.start(ctx, q, item, Actor{Kind: ActorWorker, ID: workerID})
+			if err != nil {
 				return err
+			}
+			if putOff {
+				deferred = append(deferred, id)
 			}
 		}
 	})
 	return claim, ok, err
 }
 
-// start takes an item from ready: it plans a new graph and moves the item to
-// in_progress, or blocks it when it cannot be planned.
+// start takes an item from ready: it reads its repositories' configs, plans
+// a new graph and moves the item to in_progress. It blocks the item when a
+// config is unusable or the item cannot be planned. When the code host
+// cannot be read it leaves the item ready, available again after the retry
+// delay, and reports put off.
 //
-// ponytail: every repository gets plan.DefaultRepoConfig until #11 reads
-// .factory/config.toml; pass the loaded configs here then.
-func (s *Service) start(ctx context.Context, q *db.Queries, item db.WorkItem, actor Actor) error {
-	g, err := plan.Plan(plan.Item{ID: item.ID, Title: item.Title, Repos: item.Repos}, nil, plan.DefaultTemplate())
+// ponytail: the configs are read over the network while the item's row lock
+// is held, one repository after another; read them before the transaction,
+// or cache them, if planning ever waits on that.
+func (s *Service) start(ctx context.Context, q *db.Queries, item db.WorkItem, actor Actor) (putOff bool, err error) {
+	configs, reads, err := s.readConfigs(ctx, item.Repos)
+	if errors.Is(err, ErrConfigUnavailable) {
+		if _, err := q.DelayAvailability(ctx, db.DelayAvailabilityParams{ID: item.ID, DelaySeconds: s.policy.RetryDelay.Seconds()}); err != nil {
+			return false, fmt.Errorf("put off %s: %w", item.ID, err)
+		}
+		_, err = writeEvent(ctx, q, item.ID, planner, EventPlanDeferred, "", "", map[string]any{"reason": err.Error()})
+		return true, err
+	}
+	var g plan.Graph
+	if err == nil {
+		g, err = plan.Plan(plan.Item{ID: item.ID, Title: item.Title, Repos: item.Repos}, configs, plan.DefaultTemplate())
+	}
 	if err != nil {
-		_, err = transition(ctx, q, item, Blocked, "cannot plan: "+err.Error(), Actor{Kind: ActorSystem, ID: "planner"}, EventTransition, nil)
-		return err
+		_, err = transition(ctx, q, item, Blocked, "cannot plan: "+err.Error(), planner, EventTransition, nil)
+		return false, err
 	}
 	if _, err := transition(ctx, q, item, InProgress, "", actor, EventTransition, nil); err != nil {
-		return err
+		return false, err
 	}
-	_, err = writeGraph(ctx, q, item.ID, g, actor)
-	return err
+	_, err = writeGraph(ctx, q, item.ID, g, reads, actor)
+	return false, err
 }
+
+// planner is the actor recorded when planning blocks or puts off an item.
+var planner = Actor{Kind: ActorSystem, ID: "planner"}
 
 // writeGraph replaces the item's current graph with g: the old one's
 // unfinished steps are canceled and it is marked superseded. The caller holds
 // the item's row lock.
-func writeGraph(ctx context.Context, q *db.Queries, itemID string, g plan.Graph, actor Actor) (db.WorkGraph, error) {
+func writeGraph(ctx context.Context, q *db.Queries, itemID string, g plan.Graph, reads []configRead, actor Actor) (db.WorkGraph, error) {
 	if err := g.Validate(); err != nil {
 		return db.WorkGraph{}, err
 	}
@@ -196,6 +220,7 @@ func writeGraph(ctx context.Context, q *db.Queries, itemID string, g plan.Graph,
 	}
 	if _, err := writeEvent(ctx, q, itemID, actor, EventPlanned, "", "", map[string]any{
 		"graph_id": graph.ID, "version": graph.Version, "template": graph.Template, "inputs_hash": graph.InputsHash, "steps": len(g.Steps),
+		"configs": reads,
 	}); err != nil {
 		return db.WorkGraph{}, err
 	}
@@ -524,8 +549,10 @@ func graphView(ctx context.Context, q *db.Queries, graph db.WorkGraph) (GraphVie
 }
 
 // Replan plans an item that is being worked again, after a template or
-// config change: a new graph version replaces the current one, whose
-// unfinished steps are canceled. Workers holding them lose them.
+// config change: it reads the repositories' configs again, and a new graph
+// version replaces the current one, whose unfinished steps are canceled.
+// Workers holding them lose them. An unusable config is ErrInvalid and
+// leaves the graph as it was; an unreadable one is ErrConfigUnavailable.
 func (s *Service) Replan(ctx context.Context, itemID string, actor Actor) (GraphView, error) {
 	var view GraphView
 	err := s.inTx(ctx, func(q *db.Queries) error {
@@ -536,11 +563,18 @@ func (s *Service) Replan(ctx context.Context, itemID string, actor Actor) (Graph
 		if !active(item.State) {
 			return fmt.Errorf("work item %s is %s: %w", itemID, item.State, ErrNotReplannable)
 		}
-		g, err := plan.Plan(plan.Item{ID: item.ID, Title: item.Title, Repos: item.Repos}, nil, plan.DefaultTemplate())
+		configs, reads, err := s.readConfigs(ctx, item.Repos)
+		if errors.Is(err, ErrBadRepoConfig) {
+			return fmt.Errorf("%w: %w", ErrInvalid, err)
+		}
+		if err != nil {
+			return err
+		}
+		g, err := plan.Plan(plan.Item{ID: item.ID, Title: item.Title, Repos: item.Repos}, configs, plan.DefaultTemplate())
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalid, err)
 		}
-		graph, err := writeGraph(ctx, q, itemID, g, actor)
+		graph, err := writeGraph(ctx, q, itemID, g, reads, actor)
 		if err != nil {
 			return err
 		}

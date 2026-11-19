@@ -49,7 +49,9 @@ type env struct {
 	// wrapper picks between: implement and review.
 	agentDir string
 	marker   string
-	item     db.WorkItem
+	// config is the .factory/config.toml on origin's main.
+	config string
+	item   db.WorkItem
 }
 
 // run is a command for the test, bounded by the test's context.
@@ -95,8 +97,8 @@ func newEnv(t *testing.T, gate string, maxAttempts int) *env {
 	if err := os.MkdirAll(filepath.Join(seed, ".factory"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	config := fmt.Sprintf("gate = %q\n", strings.ReplaceAll(gate, "MARKER", e.marker))
-	if err := os.WriteFile(filepath.Join(seed, ".factory", "config.toml"), []byte(config), 0o600); err != nil {
+	e.config = fmt.Sprintf("gate = %q\n", strings.ReplaceAll(gate, "MARKER", e.marker))
+	if err := os.WriteFile(filepath.Join(seed, ".factory", "config.toml"), []byte(e.config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run(t, seed, "git", "add", "-A")

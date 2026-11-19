@@ -167,6 +167,14 @@ ORDER BY max(w.priority) DESC, min(w.created_at), s.sandbox_key;
 -- How many steps of a chain can still run: pending, ready or running.
 SELECT count(*) FROM work_steps WHERE sandbox_key = @sandbox_key AND state IN ('pending', 'ready', 'running');
 
+-- name: SandboxImage :one
+-- The image the chain with this sandbox key runs in, as its current graph's
+-- workspace step records it; '' for the launcher's default.
+SELECT coalesce(s.params->>'image', '')::text FROM work_steps s
+JOIN work_graphs g ON g.id = s.graph_id AND g.state = 'current'
+WHERE s.sandbox_key = @sandbox_key AND s.kind = 'workspace'
+LIMIT 1;
+
 -- name: PickServerStep :one
 -- The next step the server runs itself: one with no sandbox that is not a
 -- wait step (merge), ready and available, in the current graph of an item
