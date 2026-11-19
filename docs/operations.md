@@ -10,7 +10,10 @@ In the release namespace (`factory`):
 
 - A Deployment running `factory serve`, one replica, with a ServiceAccount of its own.
 - A Service on port 80 (default type `LoadBalancer`) in front of the server's port 8080. Plain HTTP.
-- A Job that runs `factory migrate up` as a Helm `pre-install,pre-upgrade` hook.
+- An init container `migrate` in each server pod that runs `factory migrate up` before the server starts.
+- With `postgres.enabled=true`, an in-cluster Postgres: a StatefulSet, a headless Service `factory-postgres`, a
+  NetworkPolicy, and, with `postgres.persistence.retainStorageClass.create=true`, a cluster-scoped StorageClass
+  `factory-postgres`. See [In-cluster Postgres](#in-cluster-postgres).
 - A `PodMonitor` (`azmonitoring.coreos.com/v1`), only with `metrics.podMonitor.enabled=true`. Off by default.
 
 In the worker namespace (`workers.namespace`, default `factory-workers`):
@@ -37,7 +40,7 @@ From the cluster checklist in [decisions/0001-agent-runtime.md](decisions/0001-a
 - Worker nodes with enough ephemeral storage for clones: the largest repositories times the workers per node, plus
   build output.
 - Image pulls from `ghcr.io/autobutler-org` are allowed.
-- A Postgres database reachable from the `factory` namespace.
+- A Postgres database reachable from the `factory` namespace, or `postgres.enabled=true` to run one in the cluster.
 - Optional: a gVisor RuntimeClass, set with `launcher.runtimeClassName`.
 
 ## Secrets
@@ -46,7 +49,8 @@ Create these before installing. The names are the chart defaults.
 
 | Namespace | Secret | Key | Holds |
 | --- | --- | --- | --- |
-| `factory` | `factory-database` | `url` | Postgres URL for the server and the migration Job |
+| `factory` | `factory-database` | `url` | Postgres URL for the server and its migrate init container |
+| `factory` | `factory-postgres` | `password` | Password of the in-cluster Postgres (only with `postgres.enabled`) |
 | `factory` | `factory-api-token` | `token` | Bearer token for `/api/v1` |
 | `factory` | `factory-github-app` | `private-key.pem` | GitHub App private key (only with `github.appId`) |
 | `factory-workers` | `factory-worker-api-token` | `token` | The same value as `factory-api-token` |
@@ -82,11 +86,13 @@ kubectl -n factory get service factory
 
 ## Upgrade
 
-Run the same `helm upgrade --install` with the new `image.tag`. The migration Job runs first. If it fails, Helm
-aborts the upgrade and the old pods keep serving; the failed Job stays until the next attempt so its logs can be read:
+Run the same `helm upgrade --install` with the new `image.tag`. Each new server pod runs the migrations in its
+`migrate` init container before the server starts. If they fail, the new pod never becomes ready, the old pod keeps
+serving, and the kubelet retries with backoff. Add `--wait` to make `helm upgrade` fail when that happens. To read
+the migration's output:
 
 ```sh
-kubectl -n factory logs job/factory-migrate
+kubectl -n factory logs deployment/factory -c migrate
 ```
 
 ## Worker Jobs
@@ -115,6 +121,101 @@ Push a tag `vX.Y.Z` on `main`. The `images` workflow builds both images for linu
 upgrade with `--set image.tag=X.Y.Z`. The chart is not published as a package yet; install it from this repository at
 the same tag. Locally, `make build/image` and `make build/image/worker` build the two images.
 
+## In-cluster Postgres
+
+Azure will not create the managed flexible server for our subscription, so for now Postgres runs in the cluster
+(`postgres.enabled=true`, set in the example values). It is one Postgres 17 pod with its data on an Azure disk.
+**There are no backups.**
+
+### Secrets
+
+The chart creates no Secrets. Create the password, then the URL the server reads, before installing. The password
+is hex so it needs no escaping in the URL:
+
+```sh
+password="$(openssl rand -hex 24)"
+kubectl -n factory create secret generic factory-postgres --from-literal=password="$password"
+kubectl -n factory create secret generic factory-database \
+  --from-literal=url="postgres://factory:${password}@factory-postgres.factory.svc.cluster.local:5432/factory?sslmode=disable"
+```
+
+The host is `<release>-postgres.<namespace>.svc.cluster.local`; the commands above are for release `factory` in
+namespace `factory`. The user and database are `postgres.user` and `postgres.database` (both `factory`).
+
+`sslmode=disable` is acceptable here because the connection never leaves the cluster network and the chart's
+NetworkPolicy admits port 5432 only from this release's server pods. It is still unencrypted traffic between
+pods, a known gap.
+
+The password Secret is read only when the data directory is first created. Changing it later does not change the
+password. To rotate, change it in Postgres, then update both Secrets and restart the server:
+
+```sh
+kubectl -n factory exec -it factory-postgres-0 -- psql -U factory -d factory -c "ALTER USER factory PASSWORD '<new>'"
+```
+
+### Install
+
+Run the `helm upgrade --install` from [Install](#install). On a first install the database is still starting when
+the server pod starts: its `migrate` init container fails and is retried with backoff (the pod shows
+`Init:Error` or `Init:CrashLoopBackOff` for a minute or two) until Postgres answers, then the server starts.
+
+```sh
+kubectl -n factory rollout status statefulset/factory-postgres
+kubectl -n factory rollout status deployment/factory --timeout=10m
+```
+
+### Connecting
+
+```sh
+kubectl -n factory exec -it factory-postgres-0 -- psql -U factory -d factory
+```
+
+The socket connection inside the pod needs no password. Nothing outside the server pods can reach port 5432 while
+`networkPolicy.enabled` is true; use `kubectl exec` or `kubectl port-forward` for anything else.
+
+### What survives what
+
+The data is on the claim `data-factory-postgres-0`, backed by an Azure disk. With the example values the claim
+uses the chart's StorageClass `factory-postgres` (`reclaimPolicy: Retain`, StandardSSD_LRS); with the cluster
+default `managed-csi` the reclaim policy is Delete.
+
+| Event | Data |
+| --- | --- |
+| Pod restart, crash, or rollout | Kept. The same disk is mounted again. |
+| Node drain, upgrade, or replacement | Kept. The disk detaches and attaches to the new node. An LRS disk is zonal, so the pod can only run on a node in the disk's zone; with none there it stays Pending. |
+| `helm uninstall` | Kept. Helm never deletes a StatefulSet's claims, and the claim retention policy is Retain. Installing again with the same release name and namespace reuses the claim. The StorageClass is deleted, which does not affect the bound volume. |
+| Scaling the StatefulSet down | Kept, for the same reason. |
+| Deleting the claim | With the Retain class, the PersistentVolume and the disk are kept (the volume becomes Released; a human must clear its `claimRef` to bind it again). With `managed-csi` or any Delete class, the disk is deleted and the data is gone. |
+| Deleting the AKS cluster | **Gone.** A dynamically provisioned disk lives in the cluster's node resource group (`MC_...`), which Azure deletes with the cluster, whatever the reclaim policy. |
+
+There are no backups. Take a dump before anything risky:
+
+```sh
+kubectl -n factory exec factory-postgres-0 -- pg_dump -U factory -d factory --format=custom > factory.dump
+```
+
+### Moving to a managed server later
+
+1. Stop writes: `kubectl -n factory scale deployment/factory --replicas=0`.
+2. Dump: the `pg_dump` command above.
+3. Restore into the new server, which must exist with an empty database:
+   `pg_restore --no-owner --dbname='<new url>' factory.dump`.
+4. Point the server at it: `kubectl -n factory create secret generic factory-database --from-literal=url='<new url>'
+   --dry-run=client -o yaml | kubectl apply -f -`.
+5. `helm upgrade --install ... --set postgres.enabled=false` (or set it in your values). The server comes back on the
+   new database. The claim and disk stay until deleted by hand:
+   `kubectl -n factory delete pvc data-factory-postgres-0`, then the Released PersistentVolume and its disk.
+
+### Limitations
+
+- One replica: the database, and so the server, is down while the pod restarts or moves to another node.
+- No backups. Losing the disk or the cluster loses the data.
+- No TLS between the server and Postgres (`sslmode=disable`).
+- Major-version upgrades are manual: a new major cannot open the old data directory, so dump, install the new major
+  on a new claim, and restore. `renovate.json` keeps Renovate on Postgres 17.
+- Deferred: backups, replication, TLS for the database connection, a metrics exporter, and a disk owned by Terraform
+  outside the node resource group.
+
 ## Known limitations
 
 - The load balancer serves plain HTTP with no TLS, so the API and its bearer token cross the network unencrypted.
@@ -123,3 +224,4 @@ the same tag. Locally, `make build/image` and `make build/image/worker` build th
 - The server has no `/metrics` endpoint yet (#13), so the PodMonitor has nothing to scrape.
 - No dashboards or alerts.
 - No NetworkPolicy for the server pods yet.
+- The in-cluster Postgres has no backups and one replica ([In-cluster Postgres](#in-cluster-postgres)).

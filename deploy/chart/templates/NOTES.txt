@@ -8,6 +8,9 @@ The chart creates no Secrets. These must exist (see docs/operations.md):
 
   {{ .Release.Namespace }}/{{ .Values.database.secretName }}  key {{ .Values.database.secretKey }}  Postgres URL
   {{ .Release.Namespace }}/{{ .Values.apiToken.secretName }}  key token  API bearer token
+{{- if .Values.postgres.enabled }}
+  {{ .Release.Namespace }}/{{ .Values.postgres.passwordSecretName }}  key password  in-cluster Postgres password
+{{- end }}
 {{- if .Values.github.appId }}
   {{ .Release.Namespace }}/{{ .Values.github.privateKeySecretName }}  key private-key.pem  GitHub App private key
 {{- end }}
@@ -20,6 +23,14 @@ Check the server:
 
   kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "factory.fullname" . }}
   kubectl -n {{ .Release.Namespace }} get service {{ include "factory.fullname" . }}
+{{- if .Values.postgres.enabled }}
+
+The in-cluster Postgres has one replica and NO BACKUPS. Its URL goes in {{ .Values.database.secretName }}:
+
+  postgres://{{ .Values.postgres.user }}:<password>@{{ include "factory.fullname" . }}-postgres.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode=disable
+
+  kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ include "factory.fullname" . }}-postgres
+{{- end }}
 {{- if .Values.launcher.enabled }}
 
 Worker Jobs:
