@@ -13,6 +13,22 @@ database:
   secretName: factory-database
   secretKey: url
 
+# Azure will not create the managed flexible server for our subscription, so Postgres runs in the cluster for now,
+# with no backups. The URL in factory-database points at it (docs/operations.md, In-cluster Postgres).
+postgres:
+  enabled: true
+  passwordSecretName: factory-postgres
+  persistence:
+    size: 32Gi
+    # Keep the Azure disk when the claim is deleted. It is still deleted with the cluster.
+    retainStorageClass:
+      create: true
+      skuName: StandardSSD_LRS
+  # The system pool (linux/amd64). The arm64 worker pool is tainted, and this keeps Postgres off it regardless.
+  nodeSelector:
+    kubernetes.io/os: linux
+    kubernetes.io/arch: amd64
+
 # The GitHub App that mints workers' repository tokens. Set appId (with --set github.appId=...) once the App
 # exists; the private key Secret is in `factory` with the key private-key.pem.
 github:

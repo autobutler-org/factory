@@ -15,10 +15,47 @@ image:
 # can be raised for availability.
 replicaCount: 1
 
-# Postgres URL, read by the server and by the migration Job (FACTORY_DATABASE_URL).
+# Postgres URL, read by the server and by its migrate init container (FACTORY_DATABASE_URL).
 database:
   secretName: factory-database
   secretKey: url
+
+# An optional Postgres inside the cluster: one replica on a persistent volume, with no backups, no replication
+# and no TLS. docs/operations.md (In-cluster Postgres) has the Secrets, the URL to put in database.secretName,
+# and what survives what. Off by default: bring your own database.
+postgres:
+  enabled: false
+  # The official image. Renovate's helm-values manager updates the tag; renovate.json keeps it on major 17,
+  # because a major upgrade needs a manual dump and restore.
+  image:
+    repository: docker.io/library/postgres
+    tag: "17.12"
+    digest: ""
+  # The superuser the image creates, which the server uses, and its database.
+  user: factory
+  database: factory
+  # An existing Secret with the key `password`. Read only when the data directory is first created.
+  passwordSecretName: factory-postgres
+  persistence:
+    size: 32Gi
+    # The claim's StorageClass. Empty uses the cluster default. Ignored when retainStorageClass.create is true.
+    storageClassName: ""
+    # Create an Azure Disk StorageClass `<release>-postgres` with reclaimPolicy Retain and use it for the claim,
+    # so deleting the claim keeps the disk. Needs the disk.csi.azure.com driver.
+    retainStorageClass:
+      create: false
+      skuName: StandardSSD_LRS
+  # Small enough to sit beside the server on one 2-vCPU node.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 # The shared bearer token for /api/v1 (FACTORY_API_TOKEN), from an existing Secret with the key `token`.
 # The server refuses to listen on a non-loopback address without it.

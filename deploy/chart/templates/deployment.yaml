@@ -19,6 +19,19 @@ spec:
       automountServiceAccountToken: {{ .Values.launcher.enabled }}
       securityContext:
         {{- include "factory.podSecurityContext" . | nindent 8 }}
+      # Migrations run before the server starts, in every new pod. Until the database answers (on a first
+      # install with postgres.enabled it is still starting), this exits nonzero and the kubelet retries it with
+      # backoff. During an upgrade the old pod keeps serving until the new one is ready, so a failing migration
+      # leaves the old release running. golang-migrate's advisory lock serializes concurrent replicas.
+      initContainers:
+        - name: migrate
+          image: {{ include "factory.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate", "up"]
+          env:
+            {{- include "factory.databaseEnv" . | nindent 12 }}
+          securityContext:
+            {{- include "factory.containerSecurityContext" . | nindent 12 }}
       containers:
         - name: factory
           image: {{ include "factory.image" . }}

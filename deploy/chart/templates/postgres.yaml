@@ -1,0 +1,183 @@
+{{- if .Values.postgres.enabled }}
+{{- $name := printf "%s-postgres" (include "factory.fullname" .) -}}
+{{- $storageClass := .Values.postgres.persistence.storageClassName -}}
+{{- if .Values.postgres.persistence.retainStorageClass.create }}
+{{- $storageClass = $name -}}
+# An Azure Disk class that keeps the disk when its claim is deleted. Cluster-scoped. A dynamically provisioned
+# disk still lives in the cluster's node resource group and is deleted with the cluster (docs/operations.md).
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "factory.labels" . | nindent 4 }}
+provisioner: disk.csi.azure.com
+parameters:
+  skuName: {{ .Values.postgres.persistence.retainStorageClass.skuName }}
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+---
+{{- end }}
+# Headless: the StatefulSet's governing Service. Its DNS name resolves to the one Postgres pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "factory.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "factory.postgresSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+---
+# One replica, no backups (docs/operations.md, In-cluster Postgres).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "factory.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "factory.postgresSelectorLabels" . | nindent 6 }}
+  # Keep the claim, and so the data, when the StatefulSet is deleted (helm uninstall) or scaled down.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  template:
+    metadata:
+      labels:
+        {{- include "factory.postgresSelectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      # The image stops Postgres with SIGINT (fast shutdown); this leaves time for the shutdown checkpoint.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        # The official image's postgres user and group.
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: {{ include "factory.imageRef" .Values.postgres.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+            # Only read when the data directory is first created. Changing the Secret later does not change
+            # the password (docs/operations.md).
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.passwordSecretName }}
+                  key: password
+            # A subdirectory: the root of a new Azure disk holds lost+found, which initdb refuses.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          # Over TCP, so the socket-only server the image runs while initializing does not count as ready.
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -q -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 5
+            # Up to 10 minutes for initdb or crash recovery.
+            failureThreshold: 120
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -q -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -q -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 5
+            timeoutSeconds: 5
+          securityContext:
+            {{- include "factory.containerSecurityContext" . | nindent 12 }}
+          {{- with .Values.postgres.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            # The root filesystem is read-only: the socket directory and /tmp are scratch.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.postgres.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.postgres.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.postgres.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "factory.postgresSelectorLabels" . | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with $storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.persistence.size }}
+{{- if .Values.networkPolicy.enabled }}
+---
+# Port 5432 is reachable only from this release's server pods, which also run the migrations. Nothing else, in
+# this namespace or another (the worker namespace included), may connect.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "factory.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "factory.postgresSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "factory.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 5432
+          protocol: TCP
+{{- end }}
+{{- end }}

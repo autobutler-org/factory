@@ -96,3 +96,10 @@ capabilities:
       name: {{ .Values.database.secretName }}
       key: {{ .Values.database.secretKey }}
 {{- end -}}
+
+{{/* The in-cluster Postgres pod's labels. Distinct from factory.selectorLabels so the server's Service and
+Deployment never select it. */}}
+{{- define "factory.postgresSelectorLabels" -}}
+app.kubernetes.io/name: {{ .Chart.Name }}-postgres
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}

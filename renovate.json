@@ -4,5 +4,13 @@
     "github>autobutler-org/renovate-config",
     "helpers:pinGitHubActionDigests",
     "customManagers:dockerfileVersions"
+  ],
+  "packageRules": [
+    {
+      "description": "The chart's in-cluster Postgres keeps its data directory across upgrades, and a major version cannot open the previous one's. Major upgrades are a manual dump and restore (docs/operations.md).",
+      "matchManagers": ["helm-values"],
+      "matchPackageNames": ["docker.io/library/postgres", "postgres"],
+      "allowedVersions": "<18"
+    }
   ]
 }
