@@ -559,6 +559,22 @@ func (q *Queries) RunnableSandboxes(ctx context.Context, arg RunnableSandboxesPa
 	return items, nil
 }
 
+const sandboxImage = `-- name: SandboxImage :one
+SELECT coalesce(s.params->>'image', '')::text FROM work_steps s
+JOIN work_graphs g ON g.id = s.graph_id AND g.state = 'current'
+WHERE s.sandbox_key = $1 AND s.kind = 'workspace'
+LIMIT 1
+`
+
+// The image the chain with this sandbox key runs in, as its current graph's
+// workspace step records it; ” for the launcher's default.
+func (q *Queries) SandboxImage(ctx context.Context, sandboxKey string) (string, error) {
+	row := q.db.QueryRow(ctx, sandboxImage, sandboxKey)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const setStepClaim = `-- name: SetStepClaim :one
 UPDATE work_steps s
 SET state = 'running', claimed_by = $1, started_at = now(), stage = '', stage_reported_at = now(),

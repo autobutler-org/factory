@@ -230,6 +230,8 @@ func (h handlers) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusConflict, "not_replannable", err.Error(), nil)
 	case errors.Is(err, work.ErrOutputConflict):
 		writeError(w, r, http.StatusConflict, "output_conflict", err.Error(), nil)
+	case errors.Is(err, work.ErrConfigUnavailable):
+		writeError(w, r, http.StatusServiceUnavailable, "config_unavailable", err.Error(), nil)
 	case errors.Is(err, work.ErrRepoNotAllowed):
 		writeError(w, r, http.StatusForbidden, "repo_not_allowed", err.Error(), nil)
 	default:

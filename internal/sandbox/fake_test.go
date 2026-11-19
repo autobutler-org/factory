@@ -16,7 +16,7 @@ func TestFakeLifecycle(t *testing.T) {
 		t.Fatalf("Status before Ensure: err = %v, want ErrNotFound", err)
 	}
 
-	got, err := f.Ensure(ctx, "w1", "item/o/r")
+	got, err := f.Ensure(ctx, "w1", "item/o/r", "")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestFakeLifecycle(t *testing.T) {
 	}
 
 	f.SetPhase("w1", PhaseRunning)
-	again, err := f.Ensure(ctx, "w1", "item/o/r")
+	again, err := f.Ensure(ctx, "w1", "item/o/r", "")
 	if err != nil {
 		t.Fatalf("second Ensure: %v", err)
 	}
@@ -33,8 +33,8 @@ func TestFakeLifecycle(t *testing.T) {
 		t.Errorf("second Ensure phase = %q, want running: Ensure must not reset an existing sandbox", again.Phase)
 	}
 
-	if _, err := f.Ensure(ctx, "w2", "item/o/q"); err != nil {
-		t.Fatalf("Ensure w2: %v", err)
+	if w2, err := f.Ensure(ctx, "w2", "item/o/q", "ghcr.io/o/x:1"); err != nil || w2.Image != "ghcr.io/o/x:1" {
+		t.Fatalf("Ensure w2 = %+v, %v; want its image recorded", w2, err)
 	}
 	list, err := f.List(ctx)
 	if err != nil {
@@ -57,7 +57,7 @@ func TestFakeLifecycle(t *testing.T) {
 
 func TestFakeEnsureRejectsEmptyName(t *testing.T) {
 	t.Parallel()
-	if _, err := NewFake().Ensure(t.Context(), "", "k"); err == nil {
+	if _, err := NewFake().Ensure(t.Context(), "", "k", ""); err == nil {
 		t.Error("Ensure(\"\") succeeded, want an error")
 	}
 }
@@ -73,7 +73,7 @@ func TestFakeExec(t *testing.T) {
 		t.Fatalf("Exec on a missing sandbox: err = %v, want ErrNotFound", err)
 	}
 
-	if _, err := f.Ensure(ctx, "w1", "item/o/r"); err != nil {
+	if _, err := f.Ensure(ctx, "w1", "item/o/r", ""); err != nil {
 		t.Fatal(err)
 	}
 	err = f.Exec(ctx, "w1", ExecRequest{Command: []string{"git", "status"}, Stdin: strings.NewReader("in"), Stdout: &out})

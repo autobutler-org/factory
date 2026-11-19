@@ -88,11 +88,11 @@ func TestJobsEnsureCreatesWorkerJob(t *testing.T) {
 	t.Parallel()
 	j, client := newTestJobs(t)
 
-	sb, err := j.Ensure(t.Context(), "worker-a1", "item-1/o/r")
+	sb, err := j.Ensure(t.Context(), "worker-a1", "item-1/o/r", "")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	if sb != (Sandbox{Name: "worker-a1", Key: "item-1/o/r", Phase: PhasePending}) {
+	if sb != (Sandbox{Name: "worker-a1", Key: "item-1/o/r", Image: testConfig.Image, Phase: PhasePending}) {
 		t.Errorf("Ensure = %+v, want worker-a1 pending", sb)
 	}
 
@@ -189,6 +189,29 @@ func TestJobsEnsureCreatesWorkerJob(t *testing.T) {
 	}
 }
 
+// TestJobsEnsureRunsTheChainsImage runs a sandbox in the image it is given
+// instead of the configured one; everything else stays the same.
+func TestJobsEnsureRunsTheChainsImage(t *testing.T) {
+	t.Parallel()
+	j, client := newTestJobs(t)
+	const image = "ghcr.io/autobutler-org/quark-worker:1.4.0"
+	sb, err := j.Ensure(t.Context(), "worker-q", "item-1/o/quark", image)
+	if err != nil || sb.Image != image {
+		t.Fatalf("Ensure = %+v, %v; want image %s", sb, err, image)
+	}
+	job, err := client.BatchV1().Jobs("factory-workers").Get(t.Context(), "worker-q", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := job.Spec.Template.Spec.Containers[0]; c.Image != image || strings.Join(c.Args, " ") != "worker" {
+		t.Errorf("container %s %v, want %s running worker", c.Image, c.Args, image)
+	}
+	listed, err := j.List(t.Context())
+	if err != nil || len(listed) != 1 || listed[0].Image != image {
+		t.Errorf("List = %+v, %v; want the image read back", listed, err)
+	}
+}
+
 func TestJobsEnsureLeavesExistingJob(t *testing.T) {
 	t.Parallel()
 	existing := &batchv1.Job{
@@ -197,7 +220,7 @@ func TestJobsEnsureLeavesExistingJob(t *testing.T) {
 	}
 	j, _ := newTestJobs(t, existing)
 
-	sb, err := j.Ensure(t.Context(), "worker-a1", "item-1/o/r")
+	sb, err := j.Ensure(t.Context(), "worker-a1", "item-1/o/r", "")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -209,7 +232,7 @@ func TestJobsEnsureLeavesExistingJob(t *testing.T) {
 func TestJobsEnsureRejectsEmptyName(t *testing.T) {
 	t.Parallel()
 	j, _ := newTestJobs(t)
-	if _, err := j.Ensure(t.Context(), "", "k"); err == nil {
+	if _, err := j.Ensure(t.Context(), "", "k", ""); err == nil {
 		t.Error("Ensure(\"\") succeeded, want an error")
 	}
 }

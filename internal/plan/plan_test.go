@@ -74,6 +74,28 @@ func TestInputsHashChangesWithInputs(t *testing.T) {
 	}
 }
 
+func TestImageGoesOnTheWorkspaceStep(t *testing.T) {
+	cfg := plan.DefaultRepoConfig()
+	cfg.Image = "ghcr.io/autobutler-org/quark-worker:1"
+	g, err := plan.Plan(plan.Item{ID: itemID, Repos: []string{"o/a", "o/b"}}, map[string]plan.RepoConfig{"o/a": cfg}, plan.DefaultTemplate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	images := map[string]any{}
+	for _, s := range g.Steps {
+		if image, ok := s.Params["image"]; ok {
+			images[s.Key] = image
+		}
+	}
+	if len(images) != 1 || images["o/a/workspace"] != cfg.Image {
+		t.Errorf("steps with an image = %v; want only o/a/workspace with %s", images, cfg.Image)
+	}
+	base, _ := plan.Plan(plan.Item{ID: itemID, Repos: []string{"o/a", "o/b"}}, nil, plan.DefaultTemplate())
+	if base.InputsHash == g.InputsHash {
+		t.Error("the image does not change inputs_hash")
+	}
+}
+
 // TestProperties plans many combinations of repositories and settings and
 // checks every graph: no cycle, no duplicate key, no edge to a missing step,
 // conditions only on ancestors.

@@ -1,19 +1,48 @@
 # The factory worker image: the dev container every agent sandbox starts in. The
 # launcher runs it as a Kubernetes Job under Pod Security "restricted": user
 # 1000, no privilege escalation, all capabilities dropped, an emptyDir at
-# /workspace. Nothing in it needs root at run time.
+# /workspace. Nothing in it needs root at run time. It carries only what every
+# repository needs; a repository that needs more (Flutter, say) runs in an
+# image derived from this one, named by `image` in its .factory/config.toml.
 #
-# A repository that needs more tools extends it:
+# A derived image keeps this contract:
 #
-#   FROM ghcr.io/autobutler-org/factory-worker:<version>
+#   1. Entrypoint: `factory`, this image's binary at /usr/local/bin/factory, on
+#      PATH. The Job sets only the arguments (`worker`); do not change
+#      ENTRYPOINT or replace the binary.
+#   2. User: ends as USER 1000:1000 (numeric; the pod runs as non-root). HOME
+#      is /home/factory and /workspace exists, both writable by uid 1000.
+#      Anything a tool writes at run time (an SDK's own cache directory, say)
+#      is owned by uid 1000. No sudo, setuid or added capabilities: they are
+#      dropped.
+#   3. Environment: tools work with only PATH and HOME set. The gate and git
+#      see PATH, locale, proxy and CA settings, with HOME and TMPDIR pointed at
+#      an empty scratch directory; agent sessions see the same plus the
+#      model's ANTHROPIC_*/CLAUDE_* variables, with HOME as set here. Any
+#      other ENV (JAVA_HOME, FLUTTER_ROOT, PUB_CACHE, ...) never reaches them,
+#      so put every tool's bin directory on PATH and do not depend on files
+#      under HOME for the gate.
+#   4. Claude Code: keep the one installed here, headless-ready (onboarding
+#      done, updates off, ~/.claude.json and ~/.claude/settings.json under
+#      /home/factory). Do not reinstall it or move HOME.
+#
+# Minimal example:
+#
+#   FROM ghcr.io/autobutler-org/factory-worker:<tag>
 #   USER root
 #   RUN apt-get update && apt-get install -y --no-install-recommends <packages> \
 #       && rm -rf /var/lib/apt/lists/*
+#   # A tool outside the system PATH: install it owned by 1000 and add it to PATH.
+#   RUN install -d -o 1000 -g 1000 /opt/tool
 #   USER 1000:1000
+#   ENV PATH=/opt/tool/bin:$PATH
 #
-# Keep the entrypoint. A repository will name its image in .factory/config.toml
-# (#11); until that is read, use the extension image by setting it as the
-# launcher's worker image.
+# The base tag pins the factory worker binary too. The server and the worker
+# promise each other no compatibility across versions yet, so rebuild derived
+# images on each factory release, from that release's tag. Build them for the
+# worker nodes' architecture (arm64 in our cluster), publish them where the
+# cluster can pull without credentials (the Job has no imagePullSecrets),
+# under a prefix in --launcher-allowed-images. docs/operations.md has the steps.
 #
 # Build: make build/image/worker.
 

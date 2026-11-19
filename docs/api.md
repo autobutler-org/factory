@@ -25,7 +25,7 @@ to have yours used instead.
 | `PUT /api/v1/work/{id}/dependencies/{blocked_by_id}` | | `204` |
 | `DELETE /api/v1/work/{id}/dependencies/{blocked_by_id}` | | `204` |
 | `GET /api/v1/work/{id}/graph` | | `200 {"graph", "steps", "edges"}`, the item's latest step graph; `404` before it is planned |
-| `POST /api/v1/work/{id}/replan` | | `200` with the new graph; `409 not_replannable` unless the item is `in_progress` or `in_review` |
+| `POST /api/v1/work/{id}/replan` | | `200` with the new graph, planned with each repository's `.factory/config.toml` read again; `409 not_replannable` unless the item is `in_progress` or `in_review`; `422 invalid_request` when a config is missing or unusable; `503 config_unavailable` when the code host cannot be read |
 
 `GET /api/v1/work` also filters on `claimed_by=<worker id>`. States and transition rules are in
 [architecture/work.md](architecture/work.md); the step graph, its states and the default template are in
@@ -102,6 +102,7 @@ Every error has the same shape:
 | 503 | `codehost_not_configured` | `POST /api/v1/work/{id}/codehost-token` on a server started without a GitHub App. |
 | 413 | `body_too_large` | The body is over 1 MiB. |
 | 422 | `invalid_request` | The body parsed but a value is invalid, including an unknown `blocked_by`. |
+| 503 | `config_unavailable` | Replanning while the code host cannot be read; retry later. |
 | 503 | `not_ready` | From `/readyz` only. |
 | 500 | `internal` | Anything else; the server log has the details under the same request ID. |
 

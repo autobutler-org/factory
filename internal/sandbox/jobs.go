@@ -59,7 +59,8 @@ const (
 type JobsConfig struct {
 	// Namespace the worker Jobs run in. Required.
 	Namespace string
-	// Image is the worker image (issue #11). Required.
+	// Image is the default worker image (issue #11), for a sandbox ensured
+	// without one. Required.
 	Image string
 	// ServiceAccountName is the identity the worker's token is issued for.
 	// Empty means the namespace's default ServiceAccount.
@@ -160,7 +161,10 @@ func secretEnv(name, secret, key string) []corev1.EnvVar {
 	}}}}
 }
 
-func (j *Jobs) job(name, key string) *batchv1.Job {
+func (j *Jobs) job(name, key, image string) *batchv1.Job {
+	if image == "" {
+		image = j.cfg.Image
+	}
 	var runtimeClass *string
 	if j.cfg.RuntimeClassName != "" {
 		runtimeClass = new(j.cfg.RuntimeClassName)
@@ -206,7 +210,7 @@ func (j *Jobs) job(name, key string) *batchv1.Job {
 					},
 					Containers: []corev1.Container{{
 						Name:      workerContainer,
-						Image:     j.cfg.Image,
+						Image:     image,
 						Args:      []string{"worker"},
 						Env:       env,
 						Resources: j.cfg.Resources,
@@ -239,7 +243,11 @@ func (j *Jobs) job(name, key string) *batchv1.Job {
 }
 
 func sandboxOf(job *batchv1.Job) Sandbox {
-	return Sandbox{Name: job.Name, Key: job.Annotations[annotationKey], Phase: phase(job), Created: job.CreationTimestamp.Time}
+	var image string
+	if cs := job.Spec.Template.Spec.Containers; len(cs) > 0 {
+		image = cs[0].Image
+	}
+	return Sandbox{Name: job.Name, Key: job.Annotations[annotationKey], Image: image, Phase: phase(job), Created: job.CreationTimestamp.Time}
 }
 
 // phase maps a Job's status to a sandbox phase.
@@ -262,11 +270,11 @@ func phase(job *batchv1.Job) Phase {
 }
 
 // Ensure implements Runtime.
-func (j *Jobs) Ensure(ctx context.Context, name, key string) (Sandbox, error) {
+func (j *Jobs) Ensure(ctx context.Context, name, key, image string) (Sandbox, error) {
 	if name == "" {
 		return Sandbox{}, errors.New("ensure sandbox: name is empty")
 	}
-	created, err := j.client.BatchV1().Jobs(j.cfg.Namespace).Create(ctx, j.job(name, key), metav1.CreateOptions{})
+	created, err := j.client.BatchV1().Jobs(j.cfg.Namespace).Create(ctx, j.job(name, key, image), metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		return j.Status(ctx, name)
 	}

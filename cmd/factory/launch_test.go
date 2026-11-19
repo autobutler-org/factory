@@ -24,7 +24,7 @@ func TestWorkerJobEnvironmentIsWhatTheWorkerReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jobs.Ensure(t.Context(), "worker-a", "item/o/r"); err != nil {
+	if _, err := jobs.Ensure(t.Context(), "worker-a", "item/o/r", ""); err != nil {
 		t.Fatal(err)
 	}
 	job, err := client.BatchV1().Jobs("factory-workers").Get(t.Context(), "worker-a", metav1.GetOptions{})

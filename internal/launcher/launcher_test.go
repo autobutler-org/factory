@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/autobutler-org/factory/internal/db/dbtest"
 	"github.com/autobutler-org/factory/internal/launcher"
 	"github.com/autobutler-org/factory/internal/plan"
+	"github.com/autobutler-org/factory/internal/repoconfig"
 	"github.com/autobutler-org/factory/internal/sandbox"
 	"github.com/autobutler-org/factory/internal/work"
 )
@@ -174,6 +176,60 @@ func TestPassPlansAndStartsOneSandboxPerChain(t *testing.T) {
 	}
 	if sb, _ := e.rt.Status(context.Background(), r.Started[0]); sb.Key != first.Key {
 		t.Errorf("new sandbox serves %s, want %s", sb.Key, first.Key)
+	}
+}
+
+// TestPassStartsEachChainInItsImage starts the chain of a repository that
+// names an allowed image in that image, and the other chain in the default.
+func TestPassStartsEachChainInItsImage(t *testing.T) {
+	e := newEnv(t, 4)
+	const image = "ghcr.io/autobutler-org/quark-worker:1.4.0"
+	allowed := []string{"ghcr.io/autobutler-org/"}
+	e.l.AllowedImages = allowed
+	e.l.Work = e.svc.WithConfigs(work.Configs{
+		Host: func(_ context.Context, repo string) (codehost.Host, error) {
+			if repo == "o/quark" {
+				return &codehost.Fake{Files: map[string]string{repoconfig.Path: "gate = \"x\"\nimage = \"" + image + "\"\n"}}, nil
+			}
+			return &codehost.Fake{Files: map[string]string{repoconfig.Path: "gate = \"x\"\n"}}, nil
+		},
+		AllowedImages: allowed,
+	})
+	item := e.create(t, "o/quark", "o/plain")
+	if r := e.pass(t); len(r.Started) != 2 {
+		t.Fatalf("pass = %+v, want both chains started", r)
+	}
+	images := map[string]string{}
+	for _, sb := range e.sandboxes(t) {
+		images[sb.Key] = sb.Image
+	}
+	if images[item.ID+"/o/quark"] != image || images[item.ID+"/o/plain"] != "" {
+		t.Errorf("sandbox images = %v; want %s for o/quark and the default for o/plain", images, image)
+	}
+}
+
+// TestPassBlocksAChainWhoseImageIsNoLongerAllowed checks the image again at
+// launch: an allowlist narrowed after the item was planned blocks it rather
+// than run the image or fall back to the default.
+func TestPassBlocksAChainWhoseImageIsNoLongerAllowed(t *testing.T) {
+	e := newEnv(t, 4)
+	e.l.Work = e.svc.WithConfigs(work.Configs{
+		Host: func(context.Context, string) (codehost.Host, error) {
+			return &codehost.Fake{Files: map[string]string{repoconfig.Path: "gate = \"x\"\nimage = \"ghcr.io/autobutler-org/x:1\"\n"}}, nil
+		},
+		AllowedImages: []string{"ghcr.io/autobutler-org/"},
+	})
+	item := e.create(t, "o/a")
+	r := e.pass(t)
+	if r.Planned != 1 || len(r.Started) != 0 || len(e.sandboxes(t)) != 0 {
+		t.Fatalf("pass = %+v, sandboxes %v; want the item planned and no sandbox", r, e.sandboxes(t))
+	}
+	got, err := e.svc.Get(context.Background(), item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != work.Blocked || !strings.Contains(got.StateReason, "o/a") || !strings.Contains(got.StateReason, "not allowed") {
+		t.Errorf("item %s (%q), want blocked because o/a's image is not allowed", got.State, got.StateReason)
 	}
 }
 

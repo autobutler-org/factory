@@ -20,7 +20,8 @@ wins over the environment.
 | none | `FACTORY_API_TOKEN` | unset | Bearer token required on every `/api/v1` route. Environment only, so it does not show up in process listings. |
 | `--launcher` | `FACTORY_LAUNCHER` | `false` | Run the launcher: start worker sandboxes as Kubernetes Jobs and run server-side steps (`merge`). Needs in-cluster config. |
 | `--launcher-namespace` | `FACTORY_LAUNCHER_NAMESPACE` | `factory-workers` | Namespace the worker Jobs run in. |
-| `--launcher-image` | `FACTORY_LAUNCHER_IMAGE` | none, required with `--launcher` | Worker image. |
+| `--launcher-image` | `FACTORY_LAUNCHER_IMAGE` | none, required with `--launcher` | Default worker image, for every chain whose repository names no `image`. |
+| `--launcher-allowed-images` | `FACTORY_LAUNCHER_ALLOWED_IMAGES` | unset | Comma-separated image repository prefixes a repository's `image` may come from, such as `ghcr.io/autobutler-org/`. A prefix ending in `/` allows every repository under it; one without allows that one repository. Unset lets no repository choose its image. Read when planning too, so it applies with `--launcher` off. |
 | `--launcher-server-url` | `FACTORY_LAUNCHER_SERVER_URL` | none, required with `--launcher` | URL workers reach this server at, such as `http://factory.factory.svc.cluster.local:80`. |
 | `--launcher-max-sandboxes` | `FACTORY_LAUNCHER_MAX_SANDBOXES` | `4` | Most worker sandboxes alive at once. Keep the worker namespace's ResourceQuota in step. |
 | `--launcher-pending-timeout` | `FACTORY_LAUNCHER_PENDING_TIMEOUT` | `10m` | Destroy a worker sandbox still pending after this long (an image that will not pull, a pod that cannot be scheduled), with a logged reason, so it stops holding a slot; its chain gets a new one. `0` never does. |
@@ -91,9 +92,25 @@ Each repository the worker changes keeps its settings on its default branch:
 | `gate` | none, required | Shell command a change must pass, run in the checkout. |
 | `gate_timeout` | `30m` | How long the gate may run. |
 | `session_timeout` | `2h` | How long one agent session may run. |
-| `review_rounds` | `3` | Review rounds to plan; `0` skips review. Parsed, not yet read by the planner. |
-| `require_approval` | `false` | Wait for a human approval before merge. Parsed, not yet read by the planner. |
-| `after` | `[]` | Repositories of the same item whose chains finish first. Parsed, not yet read by the planner. |
-| `[automate] merge` | `"on"` | `"off"` leaves the pull request for a person. Parsed, not yet read by the planner. |
+| `review_rounds` | `3` | Review rounds to plan; `0` skips review. |
+| `require_approval` | `false` | Wait for a human approval before merge. |
+| `after` | `[]` | Repositories of the same item whose chains finish first. |
+| `image` | the server's `--launcher-image` | The dev container image this repository's sandboxes run in: a full reference with registry host and a tag or digest, such as `ghcr.io/autobutler-org/quark-worker:1.4.0` or `...@sha256:<digest>`. It must be under a prefix in the server's `--launcher-allowed-images`. See [operations.md](operations.md#giving-a-repository-its-own-tools). |
+| `[automate] merge` | `"on"` | `"off"` leaves the pull request for a person. |
 
-Unknown keys are an error, and a missing file or `gate` fails the item's `workspace` step for good.
+Unknown keys are an error. Two readers use the file. The worker reads `gate`, `gate_timeout` and `session_timeout`
+from its checkout of the base branch, and a missing file or `gate` fails the item's `workspace` step for good. The
+server reads the whole file when it plans an item, through the code host at each repository's default branch with an
+installation token for that repository, and plans with `review_rounds`, `require_approval`, `after`,
+`[automate] merge` and `image`:
+
+- A missing or invalid file, or an `image` that is malformed or not allowed, moves the item to `blocked` with a
+  reason that names the repository and the problem. Fix the file, then move the item back to `ready`.
+- When the code host cannot be read (an outage, a token that cannot be minted), the item stays `ready`, a
+  `plan_deferred` event records why, and it is tried again after `--retry-delay`. Other items are planned meanwhile.
+- Without a GitHub App the server cannot read the file and plans every repository with the defaults above; it logs a
+  warning at startup.
+
+The `planned` event records, per repository, the default branch, the commit the file was read at, and the chosen
+image. The config is part of the graph's `inputs_hash`. A change to the file after an item was planned does not
+reach that item until it is replanned (`POST /api/v1/work/{id}/replan`), which reads it again.

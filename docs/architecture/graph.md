@@ -58,10 +58,14 @@ keys; `inputs_hash` is the SHA-256 of the item's ID, title and repositories, eac
 
 Planning happens when an item is taken from `ready`: the first unrestricted step claim that finds no planned step
 ready, or the server's launcher when it has room for more sandboxes ([workers.md](workers.md#the-launcher)), takes
-the next ready item, plans it, records a `planned` event, and moves the item to `in_progress`. Taking an item from
+the next ready item, reads each repository's `.factory/config.toml` through the code host (with a GitHub App
+configured), plans it, records a `planned` event, and moves the item to `in_progress`. Taking an item from
 `ready` always plans a new graph version; the previous one, if any, was canceled when the item left
-`in_progress`. An item that cannot be planned (for example, one that names no repository) goes to `blocked` with
-the reason.
+`in_progress`. An item that cannot be planned (for example, one that names no repository, or whose repository's
+config is missing, invalid or names an image that is not allowed) goes to `blocked` with the reason. An item whose
+configs cannot be read because the code host is down stays `ready` and is tried again after the retry delay
+([config.md](../config.md#factoryconfigtoml)). The planner itself stays pure: `internal/work` reads the configs and
+passes them in.
 
 ### The default template
 
@@ -113,8 +117,9 @@ for the worker's next steps and for people reading the graph.
 
 ### Changing the process per repository
 
-`plan.RepoConfig` holds what a repository can change. `internal/repoconfig` parses it from `.factory/config.toml`
-(`Config.Plan()`), but the server does not read that file yet, so every repository gets the default.
+`plan.RepoConfig` holds what a repository can change. The server reads it from the repository's
+`.factory/config.toml` at plan time (`internal/repoconfig`, `Config.Plan()`); without a GitHub App every repository
+gets the default.
 
 | Field | Default | Effect |
 | --- | --- | --- |
@@ -122,6 +127,7 @@ for the worker's next steps and for people reading the graph.
 | `require_approval` | `false` | Adds `await_approval` before `merge`. |
 | `merge` | `true` | Adds `merge`. Off leaves the pull request for a person, and the item completes when an adapter records it merged. |
 | `after` | `[]` | Repositories of the same item whose chains must finish first. |
+| `image` | none | Recorded as `image` in the chain's `workspace` step params, where the launcher reads it to pick the chain's Job image. The planner does not check it; `internal/work` checks it against the allowlist before planning. |
 
 A different template (another order of kinds, say a second gate) is a new `plan.Template`; templates are code
 until a second one is needed.
@@ -175,6 +181,8 @@ workers use only the step protocol.
 ### Replanning
 
 `POST /api/v1/work/{id}/replan` plans an `in_progress` or `in_review` item again, after a template or config change.
+It reads the repositories' configs again; an unusable one is `422` and leaves the graph as it was, and an
+unreadable one is `503 config_unavailable`.
 The new graph is the next version; the old one's unfinished steps are canceled and workers holding them lose them at
 their next heartbeat. Steps of the new graph run from the start, which is safe because every kind is.
 
@@ -182,6 +190,5 @@ their next heartbeat. Steps of the new graph run from the start, which is safe b
 
 - The `decompose` kind, an agent step that proposes how to split a large item into a replan.
 - The UI's graph view (#14) and one telemetry span per step (#13).
-- Feeding `.factory/config.toml` (parsed by `internal/repoconfig`) to the planner.
 - A wait step only accepts its event while it is `ready`. An adapter that sees checks finish before the chain reaches
   `await_checks` must check the current status when the step becomes ready (#7).

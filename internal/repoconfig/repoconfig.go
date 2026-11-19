@@ -34,6 +34,13 @@
 //	# Optional. Repositories of the same work item whose chains finish first.
 //	after = ["autobutler-org/quark"]
 //
+//	# Optional. The dev container image this repository's agent sandboxes
+//	# run in: a full reference with registry host and a tag or digest.
+//	# Absent means the server's default worker image. The server runs it
+//	# only if it is under one of the server's allowed image prefixes
+//	# (--launcher-allowed-images); otherwise the work item is blocked.
+//	image = "ghcr.io/autobutler-org/quark-worker:1.4.0"
+//
 //	[automate]
 //	# "on" merges (or enqueues) the pull request once it is ready; "off"
 //	# leaves it for a person. Absent or empty means "on".
@@ -46,6 +53,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/autobutler-org/factory/internal/plan"
 	"github.com/pelletier/go-toml/v2"
@@ -89,11 +97,15 @@ type Config struct {
 	Merge bool
 	// After names repositories of the same item whose chains finish first.
 	After []string
+	// Image is the dev container image the repository's sandboxes run in;
+	// empty means the server's default. Parse checks only that it is one
+	// word; the server checks it against its allowlist.
+	Image string
 }
 
 // Plan is the part of c the planner reads.
 func (c Config) Plan() plan.RepoConfig {
-	return plan.RepoConfig{ReviewRounds: c.ReviewRounds, RequireApproval: c.RequireApproval, Merge: c.Merge, After: c.After}
+	return plan.RepoConfig{ReviewRounds: c.ReviewRounds, RequireApproval: c.RequireApproval, Merge: c.Merge, After: c.After, Image: c.Image}
 }
 
 // file is the TOML shape of [Config].
@@ -104,6 +116,7 @@ type file struct {
 	ReviewRounds    *int     `toml:"review_rounds"`
 	RequireApproval bool     `toml:"require_approval"`
 	After           []string `toml:"after"`
+	Image           *string  `toml:"image"`
 	Automate        struct {
 		Merge string `toml:"merge"`
 	} `toml:"automate"`
@@ -152,7 +165,15 @@ func Parse(name string, data []byte) (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("%w: %s: automate.merge = %q is not a legal value; set it to %q or %q", ErrInvalid, name, raw.Automate.Merge, On, Off)
 	}
+	var image string
+	if raw.Image != nil {
+		image = *raw.Image
+		if strings.TrimSpace(image) == "" || strings.ContainsFunc(image, unicode.IsSpace) {
+			return Config{}, fmt.Errorf("%w: %s: image = %q is empty or not one image reference; set a full reference such as image = \"ghcr.io/owner/name:tag\", or remove the key to use the default image", ErrInvalid, name, image)
+		}
+	}
 	return Config{
+		Image:           image,
 		Gate:            raw.Gate,
 		GateTimeout:     gateTimeout,
 		SessionTimeout:  sessionTimeout,

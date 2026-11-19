@@ -97,6 +97,10 @@ type RepoConfig struct {
 	// After names repositories of the same item whose chains must finish
 	// before this one starts.
 	After []string `json:"after"`
+	// Image is the dev container image the chain's sandbox runs in, a full
+	// image reference; empty means the launcher's default. The planner
+	// records it on the chain's workspace step and does not check it.
+	Image string `json:"image,omitempty"`
 }
 
 // DefaultRepoConfig is the configuration of a repository that adjusts nothing.
@@ -185,6 +189,9 @@ func Plan(item Item, configs map[string]RepoConfig, t Template) (Graph, error) {
 				params := map[string]any{"repo": repo}
 				if kind == Workspace {
 					params["branch"] = BranchName(item.ID, item.Title)
+					if cfg.Image != "" {
+						params["image"] = cfg.Image
+					}
 				}
 				c.add(kind, kind, params, "")
 			}

@@ -245,7 +245,8 @@ const pickNext = `-- name: PickNext :one
 SELECT w.id FROM work_items w
 WHERE w.state = 'ready'
   AND w.available_at <= now()
-  AND w.requires <@ $1::text[]
+  AND w.id <> ALL (coalesce($1::uuid[], '{}'))
+  AND w.requires <@ $2::text[]
   AND NOT EXISTS (
       SELECT 1 FROM work_dependencies d
       JOIN work_items b ON b.id = d.blocked_by_id
@@ -255,11 +256,17 @@ LIMIT 1
 FOR UPDATE OF w SKIP LOCKED
 `
 
+type PickNextParams struct {
+	Skip         []string `json:"skip"`
+	Capabilities []string `json:"capabilities"`
+}
+
 // The next item a worker may take: ready, available, every requirement among
-// the worker's capabilities, and no unfinished dependency. SKIP LOCKED lets
-// concurrent claimers each take a different row.
-func (q *Queries) PickNext(ctx context.Context, capabilities []string) (string, error) {
-	row := q.db.QueryRow(ctx, pickNext, capabilities)
+// the worker's capabilities, no unfinished dependency, and not among skip
+// (items this caller already put off). SKIP LOCKED lets concurrent claimers
+// each take a different row.
+func (q *Queries) PickNext(ctx context.Context, arg PickNextParams) (string, error) {
+	row := q.db.QueryRow(ctx, pickNext, arg.Skip, arg.Capabilities)
 	var id string
 	err := row.Scan(&id)
 	return id, err

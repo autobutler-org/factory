@@ -31,6 +31,10 @@ type Fake struct {
 	QueueID string
 	// Protections is the branch protection by branch.
 	Protections map[string]Protection
+	// Files are the default branch's files by path, for ReadFile. ReadErr,
+	// when set, is the error every ReadFile returns, as in an outage.
+	Files   map[string]string
+	ReadErr error
 
 	mu       sync.Mutex
 	comments map[int][]string
@@ -155,4 +159,19 @@ func (f *Fake) Enqueued() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.enqueued)
+}
+
+// FakeCommit is the commit Fake.ReadFile reports.
+const FakeCommit = "fa4efa4efa4efa4efa4efa4efa4efa4efa4efa4e"
+
+// ReadFile reads Files, whatever the branch.
+func (f *Fake) ReadFile(_ context.Context, _, path string) (File, error) {
+	if f.ReadErr != nil {
+		return File{}, f.ReadErr
+	}
+	content, ok := f.Files[path]
+	if !ok {
+		return File{}, fmt.Errorf("%s: %w", path, ErrFileNotFound)
+	}
+	return File{Content: []byte(content), Commit: FakeCommit}, nil
 }

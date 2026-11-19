@@ -134,8 +134,10 @@ graph, steps in plan order. `404` before the item is first planned. `graph` is
 
 ### Replan: `POST /api/v1/work/{id}/replan`
 
-No body. For an operator after a template or config change. `200` with the new graph as above; `409
-not_replannable` unless the item is `in_progress` or `in_review`.
+No body. For an operator after a template or config change; it reads each repository's `.factory/config.toml`
+again. `200` with the new graph as above; `409 not_replannable` unless the item is `in_progress` or `in_review`;
+`422 invalid_request` when a config is missing or unusable; `503 config_unavailable` when the code host cannot be
+read.
 
 ### Get a code host token: `POST /api/v1/work/{id}/codehost-token`
 
@@ -170,12 +172,18 @@ a time (a Postgres advisory lock), it:
    at startup, and `merge` steps stay `ready`.
 2. **Plans ready items** while there is room under `--launcher-max-sandboxes` (`work.Service.StartReady`), whose
    requirements are all in `--launcher-capabilities`. A sandbox's worker claims only its own chain and never plans
-   an item, so the server does it. The `planned` event and the move to `in_progress` are recorded with the actor
-   `system/launcher`.
+   an item, so the server does it. With a GitHub App it first reads each repository's `.factory/config.toml` at its
+   default branch through the code host and plans with it ([config.md](../config.md#factoryconfigtoml)): a missing or
+   invalid config, or a disallowed image, blocks the item; a code host outage leaves it `ready` until the retry
+   delay passes. The `planned` event (with the config's commit and image per repository) and the move to
+   `in_progress` are recorded with the actor `system/launcher`.
 3. **Starts one sandbox per chain** (`sandbox.Reconcile`): every sandbox key with a ready, available, non-wait step
    and no running step (`work.Service.RunnableSandboxes`) that has no live (pending or running) sandbox gets a new
    Job named `worker-<12 random characters>`, up to the cap, highest-priority item first. A chain waiting on an event
-   or a retry delay gets none.
+   or a retry delay gets none. The Job runs the image the chain's repository named (`image` in its config, carried
+   on the chain's `workspace` step params, `work.Service.SandboxImage`), or `--launcher-image` when it named none.
+   The image is checked against `--launcher-allowed-images` again here, before it runs: one no longer allowed
+   blocks the item with the reason and starts nothing. It never falls back to the default image.
 4. **Stops a live sandbox only when its chain has nothing left**: no step of its sandbox key is pending, ready or
    running (`work.Service.EndIdleSandbox`). The check and the Job's deletion happen under the item's row lock, which
    every claim takes, so a sandbox whose worker holds a step is never stopped. Normally the worker has exited
@@ -188,7 +196,9 @@ stay readable; they do not count against the cap.
 
 ### What a worker sandbox receives
 
-The worker (`factory worker`, #11) runs as the container's command `factory worker`. Its environment:
+The worker (`factory worker`, #11) runs as the container's command `factory worker`: the Job sets the arguments
+`worker` and relies on the image's entrypoint, `factory`. The image is `--launcher-image` or the repository's
+allowed `image`; a derived image keeps the contract in the header of `Dockerfile.worker`. Its environment:
 
 | Variable | Value |
 | --- | --- |

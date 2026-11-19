@@ -104,6 +104,31 @@ kubectl -n factory-workers logs job/<name>
 
 Kubernetes deletes a finished Job an hour after it ends.
 
+## Giving a repository its own tools
+
+The worker image carries what every repository needs. A repository that needs more, such as Flutter, gets an image
+of its own instead of adding to the shared one:
+
+1. Write a Dockerfile `FROM ghcr.io/autobutler-org/factory-worker:<tag>` that installs the tools and keeps the
+   contract at the top of [`Dockerfile.worker`](../Dockerfile.worker): `factory` as the entrypoint, ending as
+   `USER 1000:1000`, every tool on `PATH` (no other environment variable reaches the gate or a session, and the
+   gate's `HOME` is an empty scratch directory), and Claude Code left as installed.
+2. Build it for the worker nodes' architecture (arm64 here) and push it under a prefix in `launcher.allowedImages`
+   (`ghcr.io/autobutler-org/` in the example values), public or otherwise pullable without credentials: the Jobs
+   have no `imagePullSecrets`. Keep it small enough to pull within `launcher.pendingTimeout`.
+3. Name it in the repository's `.factory/config.toml` with a tag or digest:
+   `image = "ghcr.io/autobutler-org/quark-worker:1.4.0"`.
+
+The next item planned for the repository runs in that image. An item already planned keeps the image it was planned
+with until it is replanned. An image outside the allowlist, or written without a tag or digest, blocks the item with
+the reason; it never falls back to the default image. The image runs in the cluster with the model API key and a
+code host token, so the allowlist (`launcher.allowedImages`, `--launcher-allowed-images`) is the control on what
+code may run there; leave it empty to keep every repository on the default image.
+
+The base tag pins the worker binary as well. The server and the worker promise each other no compatibility across
+versions yet, so rebuild each derived image from the new base tag when you cut a factory release, and bump the tag in
+the repository's config.
+
 ## Turning the launcher off
 
 ```sh

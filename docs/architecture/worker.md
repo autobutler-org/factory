@@ -104,21 +104,32 @@ session_timeout = "2h"     # default 2h
 review_rounds = 3          # default 3; 0 skips review
 require_approval = false   # default false
 after = []                 # repositories of the same item whose chains finish first
+image = "ghcr.io/autobutler-org/quark-worker:1.4.0"  # optional; default: the server's worker image
 
 [automate]
 merge = "on"               # "on" (default) or "off"
 ```
 
 Unknown keys are an error. The worker reads the file from the base branch, never from the working tree, so a session
-cannot change its own gate. It uses `gate`, `gate_timeout` and `session_timeout`; the planning keys are validated
-here, and `repoconfig.Config.Plan()` turns them into the planner's `plan.RepoConfig`, but the server does not read
-the file yet, so every repository is still planned with the default (see [graph.md](graph.md#not-yet)).
+cannot change its own gate. It uses `gate`, `gate_timeout` and `session_timeout`, and validates the rest. The server
+reads the same file through the code host when it plans the item and turns the planning keys and `image` into the
+planner's `plan.RepoConfig` (`repoconfig.Config.Plan()`); see [config.md](../config.md#factoryconfigtoml).
+
+## The image
+
+The worker runs in `Dockerfile.worker`'s image, or in an image derived from it that the repository names with
+`image` and the server allows ([operations.md](../operations.md#giving-a-repository-its-own-tools)). A derived image
+keeps the contract written at the top of `Dockerfile.worker`: `factory` as the entrypoint, uid 1000 with a writable
+`HOME` and `/workspace`, tools usable with only `PATH` and `HOME` set, and the base image's Claude Code left
+installed and headless-ready.
+
+A derived image pins its base tag, and with it the version of the `factory` binary that runs as the worker. The
+worker and the server talk over the HTTP protocol in [workers.md](workers.md), which has no version negotiation, and
+no compatibility between different server and worker versions is promised yet. Rebuild derived images on each
+factory release, from that release's base tag, and roll them out with the server.
 
 ## Not yet
 
-- The server-side loop that starts sandboxes per chain (`internal/sandbox`) and feeding `.factory/config.toml` to the
-  planner.
-- The dev container image the worker runs in.
 - More than one repository per item end to end. Each repository's chain is independent and gets its own sandbox key,
   checkout, config, gate and pull request, and `open_pr` lists sibling pull requests, but no end-to-end test covers
   two repositories yet.

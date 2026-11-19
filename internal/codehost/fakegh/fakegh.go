@@ -1,7 +1,7 @@
 // Package fakegh is a stateful fake of the GitHub REST endpoints a worker
 // calls for one repository: the repository, pulls (list, create, retarget,
 // merge), pull request comments, check runs and their Actions job logs,
-// branch protection, token revocation, and a fixed GraphQL answer for the
+// branch protection, a branch's head commit and file contents, token revocation, and a fixed GraphQL answer for the
 // merge queue. List endpoints honor per_page and page. Merge can be told to
 // fail the way GitHub does. Accept adds tokens that expire, and an expired
 // token gets GitHub's 401 Bad credentials.
@@ -10,6 +10,7 @@
 package fakegh
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -51,6 +52,9 @@ var mergeErrors = map[int]string{
 	http.StatusUnprocessableEntity: "Validation Failed",
 }
 
+// HeadSHA is the commit every branch of the fake points at.
+const HeadSHA = "4ead4ead4ead4ead4ead4ead4ead4ead4ead4ead"
+
 const mergeDocs = "https://docs.github.com/rest/pulls/pulls#merge-a-pull-request"
 
 // Server is the fake. Start one with New.
@@ -82,6 +86,8 @@ type Server struct {
 	revoked int
 	// revokeStatus, when set, is the error status every revoke call returns.
 	revokeStatus int
+	// files are the repository's files by path, at HeadSHA.
+	files map[string]string
 }
 
 // New starts a fake for repo ("owner/name") that accepts only token. It is
@@ -209,6 +215,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"required_pull_request_reviews": map[string]int{"required_approving_review_count": n}})
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/branches/"):
+		writeJSON(w, http.StatusOK, map[string]any{"name": strings.TrimPrefix(path, "/branches/"), "commit": map[string]string{"sha": HeadSHA}})
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/contents/"):
+		content, ok := s.files[strings.TrimPrefix(path, "/contents/")]
+		if ref := r.URL.Query().Get("ref"); !ok || (ref != "" && ref != HeadSHA && ref != "main") {
+			writeError(w, http.StatusNotFound, "Not Found", "https://docs.github.com/rest/repos/contents#get-repository-content")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"type": "file", "encoding": "base64", "path": strings.TrimPrefix(path, "/contents/"),
+			"content": base64.StdEncoding.EncodeToString([]byte(content)),
+		})
 	case r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "commits" && parts[2] == "check-runs":
 		writeJSON(w, http.StatusOK, map[string]any{"total_count": len(s.checks), "check_runs": page(r, s.checks)})
 	case r.Method == http.MethodGet && len(parts) == 4 && parts[0] == "actions" && parts[1] == "jobs" && parts[3] == "logs":
@@ -409,6 +427,16 @@ func (s *Server) SetChecks(runs []CheckRun) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.checks = slices.Clone(runs)
+}
+
+// SetFile puts a file with content at path on every branch.
+func (s *Server) SetFile(path, content string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.files == nil {
+		s.files = map[string]string{}
+	}
+	s.files[path] = content
 }
 
 // SetLog sets the log of Actions job id. A job without one is not found.

@@ -29,11 +29,13 @@ RETURNING id;
 
 -- name: PickNext :one
 -- The next item a worker may take: ready, available, every requirement among
--- the worker's capabilities, and no unfinished dependency. SKIP LOCKED lets
--- concurrent claimers each take a different row.
+-- the worker's capabilities, no unfinished dependency, and not among skip
+-- (items this caller already put off). SKIP LOCKED lets concurrent claimers
+-- each take a different row.
 SELECT w.id FROM work_items w
 WHERE w.state = 'ready'
   AND w.available_at <= now()
+  AND w.id <> ALL (coalesce(@skip::uuid[], '{}'))
   AND w.requires <@ @capabilities::text[]
   AND NOT EXISTS (
       SELECT 1 FROM work_dependencies d

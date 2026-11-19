@@ -45,6 +45,10 @@ service:
 
 launcher:
   enabled: true
+  # Repositories may run in images built from the worker image under ghcr.io/autobutler-org
+  # (docs/operations.md, "Giving a repository its own tools").
+  allowedImages:
+    - ghcr.io/autobutler-org/
   # The worker node pool (arm64).
   nodeSelector:
     factory.autobutler.org/workers: "true"

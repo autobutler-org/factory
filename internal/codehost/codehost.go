@@ -1,6 +1,7 @@
 // Package codehost talks to the code host, where a work item's code goes: pull
 // requests and their comments, check runs and their logs, merge, the merge
-// queue, branch protection, and GitHub App installation tokens. GitHub
+// queue, branch protection, one file at a branch (for the server to read a
+// repository's config), and GitHub App installation tokens. GitHub
 // implements Host over HTTP for one repository, asking for the token before
 // each call; TokenMinter mints those tokens and RefreshingToken keeps one
 // fresh. Fake implements Host in memory for tests, and the fakegh
@@ -14,7 +15,14 @@
 // and records no outputs (the worker reports them to the API).
 package codehost
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrFileNotFound is returned by ReadFile for a path the branch does not
+// have. Any other ReadFile error means the code host could not be read.
+var ErrFileNotFound = errors.New("file not found")
 
 // Host is one repository on a code host, seen with one worker's token.
 type Host interface {
@@ -45,6 +53,16 @@ type Host interface {
 	// RetargetPull changes the base branch of pull request number, as when
 	// the pull request it was stacked on merges.
 	RetargetPull(ctx context.Context, number int, base string) error
+	// ReadFile reads the file at path in the commit branch points at, or
+	// returns ErrFileNotFound.
+	ReadFile(ctx context.Context, branch, path string) (File, error)
+}
+
+// File is one file read from the code host.
+type File struct {
+	Content []byte
+	// Commit is the SHA of the commit the file was read at.
+	Commit string
 }
 
 // Pull is a pull request.
