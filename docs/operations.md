@@ -23,7 +23,9 @@ In the worker namespace (`workers.namespace`, default `factory-workers`):
   delete; `pods` get, list; `pods/log` get; `pods/exec` create, get.
 - A policy for worker pods (label `app.kubernetes.io/name: factory-worker`): no ingress; egress to cluster DNS, the
   factory server pods on 8080, and HTTPS. With `networkPolicy.cilium=true` it is a `CiliumNetworkPolicy` that limits
-  HTTPS to the hosts in `workers.egress.fqdns` (GitHub and the model API). Otherwise it is a plain NetworkPolicy that
+  HTTPS to the hosts in `workers.egress.fqdns` (GitHub and the model API by default; the example values add the
+  package registries a gate downloads from, such as `pub.dev`, `proxy.golang.org` and `registry.npmjs.org`. A gate
+  that needs another host fails at its first download: add the host to that list and upgrade the release). Otherwise it is a plain NetworkPolicy that
   allows 443 to any address outside `workers.egress.denyCidrs`.
 
 The chart creates no namespaces and no Secrets. The worker Jobs are created by the server, not by the chart.
