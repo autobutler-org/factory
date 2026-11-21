@@ -1,43 +1,24 @@
 package worker
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/autobutler-org/factory/internal/apiclient"
 	"github.com/autobutler-org/factory/internal/codehost"
 )
 
-// requestTimeout bounds one call to the factory server.
-const requestTimeout = 30 * time.Second
-
-// ErrLost matches an APIError that says the worker no longer holds the step:
+// ErrLost matches an error that says the worker no longer holds the step:
 // 409 not_claimant or lease_expired. The worker stops working on the step
 // and does not report on it again.
 var ErrLost = errors.New("the step's claim was lost")
 
 // APIError is an error reply from the factory server.
-type APIError struct {
-	Status  int
-	Code    string
-	Message string
-}
-
-func (e *APIError) Error() string {
-	return fmt.Sprintf("factory server: %d %s: %s", e.Status, e.Code, e.Message)
-}
-
-// Is makes errors.Is(err, ErrLost) true for the codes that mean the claim
-// is gone.
-func (e *APIError) Is(target error) bool {
-	return target == ErrLost && (e.Code == "not_claimant" || e.Code == "lease_expired")
-}
+type APIError = apiclient.Error
 
 // Client speaks the worker side of the step protocol
 // (docs/architecture/workers.md) to a factory server.
@@ -102,65 +83,15 @@ type Result struct {
 }
 
 // call sends one JSON request and decodes a 200 reply into out. ok is false
-// for a 204.
+// for a 204. An error reply that means the claim is gone also matches ErrLost.
 func (c *Client) call(ctx context.Context, method, path string, in, out any) (ok bool, err error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-	var body io.Reader
-	if in != nil {
-		data, err := json.Marshal(in)
-		if err != nil {
-			return false, err
-		}
-		body = bytes.NewReader(data)
+	api := apiclient.Client{URL: c.URL, Token: c.Token, HTTP: c.HTTP}
+	ok, err = api.Call(ctx, method, path, nil, in, out)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && (apiErr.Code == "not_claimant" || apiErr.Code == "lease_expired") {
+		return false, fmt.Errorf("%w: %w", ErrLost, err)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(c.URL, "/")+path, body)
-	if err != nil {
-		return false, err
-	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if c.Token != nil {
-		token, err := c.Token()
-		if err != nil {
-			return false, err
-		}
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-	}
-	client := c.HTTP
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, fmt.Errorf("%s %s: %w. Check that the factory server is reachable at %s", method, path, err, c.URL)
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return false, fmt.Errorf("%s %s: %w", method, path, err)
-	}
-	switch {
-	case resp.StatusCode == http.StatusNoContent:
-		return false, nil
-	case resp.StatusCode != http.StatusOK:
-		var e struct {
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		_ = json.Unmarshal(data, &e)
-		return false, fmt.Errorf("%s %s: %w", method, path, &APIError{Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message})
-	case out != nil:
-		if err := json.Unmarshal(data, out); err != nil {
-			return false, fmt.Errorf("%s %s: decode the reply: %w", method, path, err)
-		}
-	}
-	return true, nil
+	return ok, err
 }
 
 // Register registers the worker as a cluster worker named name and returns

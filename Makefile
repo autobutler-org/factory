@@ -165,6 +165,10 @@ test/db: ## Run every test, the database tests included, against Postgres (start
 test/e2e: ## Run the worker's end-to-end tests against Postgres (start it with make serve/postgres)
 	FACTORY_DATABASE_URL='$(TEST_DATABASE_URL)' $(GO) test -tags e2e -race -count=1 -run '^TestE2E' ./internal/worker
 
+.PHONY: test/golden
+test/golden: ## Rewrite the CLI's golden files (cmd/factory/testdata) from the current output; review the diff
+	UPDATE_GOLDEN=1 $(GO) test -count=1 ./cmd/factory
+
 .PHONY: test/web
 test/web: web/node_modules/.installed ## Run the web UI's component tests
 	$(NPM) test

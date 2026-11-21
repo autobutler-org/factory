@@ -1,0 +1,6 @@
+$ factory --nope
+exit 2
+--- stdout
+--- stderr
+factory: unknown command "--nope"
+Run 'factory --help' for usage.

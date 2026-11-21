@@ -11,7 +11,7 @@ import (
 	"github.com/autobutler-org/factory/internal/db/dbtest"
 )
 
-func TestParseFlagsFallsBackToEnv(t *testing.T) {
+func TestApplyEnvFallsBackToEnv(t *testing.T) {
 	t.Setenv("FACTORY_DATABASE_URL", "from-env")
 	t.Setenv("FACTORY_STUCK_AFTER", "from-env-too")
 	tests := []struct {
@@ -27,7 +27,10 @@ func TestParseFlagsFallsBackToEnv(t *testing.T) {
 			fs := flag.NewFlagSet("x", flag.ContinueOnError)
 			got := fs.String("database-url", "", "")
 			stuck := fs.String("stuck-after", "", "")
-			if err := parseFlags(fs, tt.args); err != nil {
+			if err := fs.Parse(tt.args); err != nil {
+				t.Fatal(err)
+			}
+			if err := applyEnv(fs); err != nil {
 				t.Fatal(err)
 			}
 			if *got != tt.want {
@@ -49,11 +52,9 @@ func TestMigrateUsage(t *testing.T) {
 		wantStdout string
 		wantStderr string
 	}{
-		{name: "no subcommand", args: []string{"migrate"}, wantCode: 2, wantStderr: migrateUsage},
-		{name: "help", args: []string{"migrate", "--help"}, wantStdout: migrateUsage},
 		{
 			name: "unknown subcommand", args: []string{"migrate", "sideways"}, wantCode: 2,
-			wantStderr: "factory migrate: unknown subcommand \"sideways\"\n" + migrateUsage,
+			wantStderr: "factory: unknown command \"migrate sideways\"\nRun 'factory migrate --help' for its commands.\n",
 		},
 		{
 			name: "no database URL", args: []string{"migrate", "status"}, wantCode: 1,

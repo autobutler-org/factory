@@ -1,0 +1,11 @@
+$ factory migrate down -h
+exit 0
+--- stdout
+usage: factory migrate down [flags]
+
+Roll back the most recent migration only. The migrations are built into this binary.
+
+Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_DATABASE_URL):
+  --database-url URL
+      Postgres URL
+--- stderr

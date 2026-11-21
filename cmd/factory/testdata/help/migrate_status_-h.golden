@@ -1,0 +1,11 @@
+$ factory migrate status -h
+exit 0
+--- stdout
+usage: factory migrate status [flags]
+
+Print the applied version and each migration as applied or pending. The migrations are built into this binary.
+
+Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_DATABASE_URL):
+  --database-url URL
+      Postgres URL
+--- stderr
