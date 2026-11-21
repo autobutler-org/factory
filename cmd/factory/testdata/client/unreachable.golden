@@ -1,0 +1,5 @@
+$ factory status --server http://127.0.0.1:1
+exit 1
+--- stdout
+--- stderr
+factory status: cannot reach the factory server at http://127.0.0.1:1. Check --server or FACTORY_SERVER, and that the server is running.

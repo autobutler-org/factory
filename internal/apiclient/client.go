@@ -25,9 +25,10 @@ var ErrUnreachable = errors.New("factory server unreachable")
 
 // Error is an error reply from the factory server.
 type Error struct {
-	Status  int
-	Code    string
-	Message string
+	Status    int
+	Code      string
+	Message   string
+	RequestID string
 	// CurrentState and Allowed come with illegal_transition: the item's
 	// state and the states it may move to from there.
 	CurrentState string
@@ -104,13 +105,14 @@ func (c *Client) Call(ctx context.Context, method, path string, header http.Head
 			Error struct {
 				Code         string   `json:"code"`
 				Message      string   `json:"message"`
+				RequestID    string   `json:"request_id"`
 				CurrentState string   `json:"current_state"`
 				Allowed      []string `json:"allowed"`
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(data, &e)
 		return false, fmt.Errorf("%s %s: %w", method, path, &Error{
-			Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message,
+			Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message, RequestID: e.Error.RequestID,
 			CurrentState: e.Error.CurrentState, Allowed: e.Error.Allowed,
 		})
 	case out != nil:

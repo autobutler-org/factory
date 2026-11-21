@@ -1,0 +1,41 @@
+$ factory workers list --output json
+exit 0
+--- stdout
+{
+  "workers": [
+    {
+      "id": "w1",
+      "name": "worker-a",
+      "kind": "cluster",
+      "capabilities": {
+        "harnesses": [
+          "claude-code"
+        ]
+      },
+      "version": "v0.3.0",
+      "registered_at": "2026-11-18T12:01:00Z",
+      "last_seen_at": "2026-11-18T12:05:00Z",
+      "state": "active",
+      "holds": [
+        {
+          "work_item_id": "0b8c1f9e-0000-4000-8000-000000000001",
+          "title": "add null check to the importer",
+          "step_id": "s2",
+          "step_key": "autobutler-org/quark/implement"
+        }
+      ]
+    },
+    {
+      "id": "w2",
+      "name": "worker-b",
+      "kind": "cluster",
+      "capabilities": {},
+      "version": "v0.3.0",
+      "registered_at": "2026-11-17T09:00:00Z",
+      "last_seen_at": "2026-11-17T10:00:00Z",
+      "state": "gone",
+      "holds": []
+    }
+  ]
+}
+--- stderr

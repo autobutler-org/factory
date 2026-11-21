@@ -1,0 +1,27 @@
+$ factory work show 0b8c1f9e-0000-4000-8000-000000000001
+exit 0
+--- stdout
+ID:        0b8c1f9e-0000-4000-8000-000000000001
+Title:     add null check to the importer
+State:     in_progress
+Stage:     implementing
+Priority:  2
+Repos:     autobutler-org/quark
+Source:    github autobutler-org/quark#123
+URL:       https://github.com/autobutler-org/quark/issues/123
+Requires:  claude
+Attempts:  1
+Created:   2026-11-18 12:00:00
+Updated:   2026-11-18 12:05:00
+
+The importer crashes on a missing field.
+
+Steps (graph v1, default, running):
+  KEY                             KIND       STATE      ATTEMPTS  AFTER
+  autobutler-org/quark/workspace  workspace  succeeded  1         
+  autobutler-org/quark/implement  implement  running    1         autobutler-org/quark/workspace
+
+Timeline:
+  2026-11-18 12:00:00  adapter github   created -> ready
+  2026-11-18 12:01:00  system launcher  transition ready -> in_progress: planned
+--- stderr

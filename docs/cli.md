@@ -18,17 +18,35 @@ conventions below. The settings of `serve`, `worker` and `migrate` are in [confi
   and each command defines its flags with their help text. `factory --help`, each command's usage, and dispatch are
   all generated from it, so help cannot drift from behavior.
 
+## Talking to a server
+
+The commands that call the API (`status`, `work ...`, `workers ...`) take:
+
+- the server's URL from `--server`, else `FACTORY_SERVER`. Neither set is a usage error that says to set one.
+  A config file written by `factory login` comes with sign-in, #15.
+- the bearer token from `FACTORY_API_TOKEN`, the token the server was started with. There is deliberately no flag,
+  so the token stays out of process listings. #15 replaces the shared token with sign-in.
+- `--output table` (the default) or `--output json`. JSON is the API's reply, indented, for scripts.
+
+Their errors name the fix: a server that cannot be reached, a missing or refused token, an unknown item, or a route
+an older server does not have.
+
 ## Commands
 
 | Command | Does |
 | --- | --- |
 | `factory migrate up`, `down`, `status` | Apply, roll back one, or report the database migrations. |
 | `factory serve` | Serve the HTTP API and the web UI. |
+| `factory status` | Work counts by state, workers by state, the item waiting in `ready` longest, and the five latest failures (`GET /api/v1/status`). |
 | `factory version` | Print the version, commit, and build date stamped into the binary. |
+| `factory work list [--state S] [--source S] [--repo R] [--claimed-by ID] [--limit N] [--cursor C]` | A table of work items, highest priority first, then oldest. The next page's cursor goes to stderr. `--mine` waits on sign-in (#15). |
+| `factory work show <id>` | One item, its latest step graph, and its event timeline. |
 | `factory worker` | Run the step executor in a worker sandbox. |
+| `factory workers list` | The worker registry: name, kind, state, version, last seen, and what each holds. |
 
 ## Tests
 
-`cmd/factory/testdata/` holds golden files: the help text of `factory`, every group, and every command, and the
-output of each command's error paths. `make test` compares against them; after an intended change,
+`cmd/factory/testdata/` holds golden files: the help text of `factory`, every group, and every command, each read
+command's table and JSON output against a fake server, and the output of each command's error paths. A test fails
+when an error path's output names no next step. `make test` compares against them; after an intended change,
 `make test/golden` rewrites them, and the diff is part of the pull request.

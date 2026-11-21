@@ -117,3 +117,13 @@ SELECT * FROM work_outputs WHERE work_item_id = @work_item_id ORDER BY id;
 SELECT count(*) FILTER (WHERE status = 'open')   AS open,
        count(*) FILTER (WHERE status = 'merged') AS merged
 FROM work_outputs WHERE work_item_id = @work_item_id;
+
+-- name: CountItemsByState :many
+SELECT state, count(*) AS items FROM work_items GROUP BY state;
+
+-- name: OldestReadyItem :many
+-- The item that has waited in ready longest; none when nothing is ready.
+SELECT * FROM work_items WHERE state = 'ready' ORDER BY state_changed_at, id LIMIT 1;
+
+-- name: RecentFailedItems :many
+SELECT * FROM work_items WHERE state = 'failed' ORDER BY state_changed_at DESC, id LIMIT @max_rows;

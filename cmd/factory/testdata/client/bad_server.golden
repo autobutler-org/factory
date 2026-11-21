@@ -1,0 +1,6 @@
+$ factory status --server 127.0.0.1:8080
+exit 2
+--- stdout
+--- stderr
+factory status: server "127.0.0.1:8080" is not an http or https URL; use one such as http://127.0.0.1:8080
+Run 'factory status --help' for usage.
