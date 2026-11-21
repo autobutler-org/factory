@@ -112,7 +112,7 @@ The worker image carries what every repository needs. A repository that needs mo
 of its own instead of adding to the shared one:
 
 1. Write a Dockerfile `FROM ghcr.io/autobutler-org/factory-worker:<tag>` that installs the tools and keeps the
-   contract at the top of [`Dockerfile.worker`](../Dockerfile.worker): `factory` as the entrypoint, ending as
+   contract at the top of [`Dockerfile.worker`](../Dockerfile.worker): `tini -- factory` as the entrypoint, ending as
    `USER 1000:1000`, every tool on `PATH` (no other environment variable reaches the gate or a session, and the
    gate's `HOME` is an empty scratch directory), and Claude Code left as installed.
 2. Build it for the worker nodes' architecture (arm64 here) and push it under a prefix in `launcher.allowedImages`

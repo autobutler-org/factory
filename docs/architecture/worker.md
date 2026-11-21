@@ -119,9 +119,16 @@ planner's `plan.RepoConfig` (`repoconfig.Config.Plan()`); see [config.md](../con
 
 The worker runs in `Dockerfile.worker`'s image, or in an image derived from it that the repository names with
 `image` and the server allows ([operations.md](../operations.md#giving-a-repository-its-own-tools)). A derived image
-keeps the contract written at the top of `Dockerfile.worker`: `factory` as the entrypoint, uid 1000 with a writable
-`HOME` and `/workspace`, tools usable with only `PATH` and `HOME` set, and the base image's Claude Code left
+keeps the contract written at the top of `Dockerfile.worker`: `tini -- factory` as the entrypoint, uid 1000 with a
+writable `HOME` and `/workspace`, tools usable with only `PATH` and `HOME` set, and the base image's Claude Code left
 installed and headless-ready.
+
+[tini](https://github.com/krallin/tini), from Debian, is the container's PID 1 and reaps. A process whose parent
+dies is re-parented to PID 1: an agent's or the gate's descendants after a process group kill, a daemon a build
+leaves behind, or anything a `kubectl exec` session starts. `factory worker` never waits for processes it did not
+start, so as PID 1 it would leave each of them a zombie for the life of the pod (and a test that probes whether a
+killed process is gone would see it still there). tini waits for every child it inherits, and forwards SIGTERM to
+the worker so the worker can still release its step.
 
 A derived image pins its base tag, and with it the version of the `factory` binary that runs as the worker. The
 worker and the server talk over the HTTP protocol in [workers.md](workers.md), which has no version negotiation, and
