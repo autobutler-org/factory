@@ -157,6 +157,13 @@ Patterns new UI in `web/` reuses rather than rebuilds:
 - **Polled data** comes from `usePoll` (`web/src/poll.ts`), and the page passes its result to `<Status {...poll} />`
   (`web/src/format.tsx`). Status owns the loading, updated, paused, failed-load and failed-refresh copy; only the
   error is in its live region, so the poll does not announce itself. A 404 stops the poll and is the page's to explain.
+- **Color** comes only from the semantic tokens at the top of `web/src/style.css` (`--color-{bg|text|border}-…`,
+  `--color-accent-text`, `--color-focus-ring`, `--color-{danger|warning|success|progress}-text`), each defined for
+  light and dark, with its measured contrast in the comment above them. A new role gets a new token, measured in
+  both themes; never borrow one for its value. Control edges use `--color-border-control` (3:1), not `-subtle`.
+- **State** renders through `<State state=...>`, which writes the state out and colors it by `stateRole`
+  (`web/src/format.tsx`): danger, warning, success, progress or neutral. A new state goes in that map and its test.
+- **Type**: system fonts only; `code` and `pre` use `--font-mono`; counts and times use `tabular-nums`.
 - **Preformatted text** that can be long (reasons, logs, JSON) goes in `<Block label=...>`, a named, focusable,
   scrolling region, so a keyboard can scroll it.
 

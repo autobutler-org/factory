@@ -20,8 +20,28 @@ export function ago(at: string, now = Date.now()): string {
 
 export const label = (state: string) => state.replaceAll("_", " ");
 
+// The color role of every state the API returns: work items, steps, outputs and workers. One
+// state, one role, everywhere; style.css colors each role from a token. Unknown states are neutral.
+const ROLES: Record<string, "danger" | "warning" | "success" | "progress"> = {
+  failed: "danger",
+  gone: "danger",
+  blocked: "warning",
+  draining: "warning",
+  completed: "success",
+  succeeded: "success",
+  merged: "success",
+  active: "success",
+  in_progress: "progress",
+  in_review: "progress",
+  running: "progress",
+  open: "progress",
+};
+
+export const stateRole = (state: string) => ROLES[state] ?? "neutral";
+
+// State writes the state out, so color is never its only cue.
 export function State({ state }: { state: string }) {
-  return <span className={`state state-${state}`}>{label(state)}</span>;
+  return <span className={`state state-${stateRole(state)}`}>{label(state)}</span>;
 }
 
 // Status says how fresh the page is. Only a refresh error is announced: the region is rendered
