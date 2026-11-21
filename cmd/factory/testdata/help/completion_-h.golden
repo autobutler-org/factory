@@ -1,0 +1,12 @@
+$ factory completion -h
+exit 0
+--- stdout
+usage: factory completion <bash|zsh|fish>
+
+Print a completion script for bash, zsh or fish, generated from the command
+table, so it completes every command and its flags. Load it with:
+
+  bash:  source <(factory completion bash)
+  zsh:   source <(factory completion zsh)
+  fish:  factory completion fish | source
+--- stderr
