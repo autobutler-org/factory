@@ -150,6 +150,16 @@ skill's `SKILL.md` and the files it links, and follows its procedure and report 
   they turn up.
 - `variant`, `explain-interface`, `build-design`, and `afk` are vendored with the rest but not part of the workflow.
 
+Patterns new UI in `web/` reuses rather than rebuilds:
+
+- **Pages** call `useTitle` (`web/src/nav.tsx`) and give their `<h1>` `tabIndex={-1}`; `App` moves focus to it
+  after a client-side navigation.
+- **Polled data** comes from `usePoll` (`web/src/poll.ts`), and the page passes its result to `<Status {...poll} />`
+  (`web/src/format.tsx`). Status owns the loading, updated, paused, failed-load and failed-refresh copy; only the
+  error is in its live region, so the poll does not announce itself. A 404 stops the poll and is the page's to explain.
+- **Preformatted text** that can be long (reasons, logs, JSON) goes in `<Block label=...>`, a named, focusable,
+  scrolling region, so a keyboard can scroll it.
+
 ## Database
 
 - Postgres is the only store. Configure it with `FACTORY_DATABASE_URL` (or `--database-url`).

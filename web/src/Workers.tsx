@@ -1,16 +1,16 @@
 import type { Worker } from "./api";
 import { ago, State, Status, Time } from "./format";
-import { Link } from "./nav";
+import { Link, useTitle } from "./nav";
 import { usePoll } from "./poll";
 
 export function Workers() {
-  const { data, error, updated } = usePoll("workers", (get, signal) =>
-    get<{ workers: Worker[] }>("/workers", signal)
-  );
+  useTitle("Workers");
+  const poll = usePoll("workers", (get, signal) => get<{ workers: Worker[] }>("/workers", signal));
+  const { data } = poll;
   return (
     <>
-      <h1>Workers</h1>
-      <Status error={error} updated={updated} />
+      <h1 tabIndex={-1}>Workers</h1>
+      <Status {...poll} />
       {data && data.workers.length === 0 ? <p>No worker has registered.</p> : null}
       <ul className="cards">
         {data?.workers.map((w) => (

@@ -1,4 +1,8 @@
-// Times and states as people read them.
+import type { ReactNode } from "react";
+import { ApiError } from "./api";
+import { POLL_MS } from "./poll";
+
+// Times, states and page status as people read them.
 
 export function Time({ at }: { at: string | null | undefined }) {
   if (!at) return <>never</>;
@@ -20,11 +24,62 @@ export function State({ state }: { state: string }) {
   return <span className={`state state-${state}`}>{label(state)}</span>;
 }
 
-export function Status({ error, updated }: { error?: Error; updated?: Date }) {
+// Status says how fresh the page is. Only a refresh error is announced: the region is rendered
+// empty first so screen readers pick up its text, while "Updated …", which changes every poll,
+// is not announced (WCAG 4.1.3 without the chatter).
+export function Status({
+  error,
+  updated,
+  paused,
+}: {
+  error?: Error;
+  updated?: Date;
+  paused?: boolean;
+}) {
+  const at = updated?.toLocaleTimeString();
+  const reason = error?.message.replace(/\.$/, "");
+  const retry = paused
+    ? "Resume updates to try again."
+    : `Trying again every ${POLL_MS / 1000} seconds.`;
+  // A 404 stops polling. Before any data the page shows its own not-found state; after, what
+  // was shown is kept and there is nothing to retry.
+  const missing = error instanceof ApiError && error.status === 404;
+  let problem = "";
+  if (error && missing && at) problem = `Could not refresh: ${reason}. Showing data from ${at}.`;
+  else if (error && !missing) {
+    problem = at
+      ? `Could not refresh: ${reason}. Showing data from ${at}. ${retry}`
+      : `Could not load: ${reason}. ${retry}`;
+  }
+  let fresh = "";
+  if (!error) {
+    if (!at) fresh = paused ? "Updates paused." : "Loading…";
+    else fresh = paused ? `Updates paused. Showing data from ${at}.` : `Updated ${at}.`;
+  }
   return (
-    <p className="status" role="status">
-      {error ? <span className="error">Refresh failed: {error.message}. </span> : null}
-      {updated ? `Updated ${updated.toLocaleTimeString()}.` : "Loading…"}
-    </p>
+    <div className="status">
+      <p role="status" className="error">
+        {problem}
+      </p>
+      {fresh ? <p>{fresh}</p> : null}
+    </div>
+  );
+}
+
+// Block is preformatted text that scrolls past 30rem. It joins the tab order and carries a name,
+// so a keyboard can scroll it (WCAG 2.1.1).
+export function Block({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className: string;
+  children: ReactNode;
+}) {
+  return (
+    <pre className={className} tabIndex={0} role="region" aria-label={label}>
+      {children}
+    </pre>
   );
 }

@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
 
 // A history-API router: three pages do not need a routing library.
 const subscribe = (notify: () => void) => {
@@ -27,4 +27,11 @@ export function Link({ to, children }: { to: string; children: ReactNode }) {
       {children}
     </a>
   );
+}
+
+// useTitle names the page in the tab and in history (WCAG 2.4.2).
+export function useTitle(title: string) {
+  useEffect(() => {
+    document.title = `${title} · factory`;
+  }, [title]);
 }
