@@ -14,10 +14,14 @@ import (
 // nextStep matches an error message that says what to do next.
 var nextStep = regexp.MustCompile(`(?i)\b(run|set|pass|use|check|start|install|fix|point|log in)\b`)
 
-// golden compares got with testdata/<name>.golden. UPDATE_GOLDEN=1 (make
-// test/golden) rewrites the file instead.
+// golden compares got with testdata/<name>.golden, with a fake server's URL
+// written $SERVER. UPDATE_GOLDEN=1 (make test/golden) rewrites the file
+// instead.
 func golden(t *testing.T, name, got string) {
 	t.Helper()
+	if server := os.Getenv(serverEnv); server != "" {
+		got = strings.ReplaceAll(got, server, "$SERVER")
+	}
 	if strings.Contains(got, "\nexit ") && !strings.Contains(got, "\nexit 0\n") {
 		_, stderr, _ := strings.Cut(got, "--- stderr\n")
 		if !nextStep.MatchString(stderr) {

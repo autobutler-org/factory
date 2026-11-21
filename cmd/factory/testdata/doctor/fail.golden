@@ -1,0 +1,20 @@
+$ factory doctor
+exit 1
+--- stdout
+pass  server reachable                 $SERVER
+pass  token accepted                   the server asks for no token: it is unauthenticated, on loopback
+skip  version compatible               this factory dev, server v9.0.0; a build that is not a release cannot be compared
+fail  database reachable and migrated  database is behind this binary's migrations: run `factory migrate up`
+        fix:                           apply the migrations to the server's database with `factory migrate up`
+fail  code host credential             no GitHub App is configured
+        fix:                           start the server with --github-app-id and --github-app-key-file
+pass  sandbox runtime reachable        0 worker sandbox(es) exist
+fail  cluster worker active            no cluster worker is active
+        fix:                           start one
+
+Not checked yet, because the feature has not landed:
+  each configured adapter has its secret (adapters: #7, #8)
+  the stored sign-in is valid and its role (sign-in: #15)
+  the telemetry exporter is delivering (telemetry: #13)
+--- stderr
+factory doctor: 3 check(s) failed: database reachable and migrated, code host credential, cluster worker active. Fix each as shown, then run 'factory doctor' again.

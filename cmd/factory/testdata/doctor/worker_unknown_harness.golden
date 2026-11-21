@@ -1,0 +1,6 @@
+$ factory doctor --worker --harnesses gpt
+exit 2
+--- stdout
+--- stderr
+factory doctor: --harnesses: unknown harness "gpt"; use claude-code, grok, or both
+Run 'factory doctor --help' for usage.

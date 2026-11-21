@@ -1,0 +1,34 @@
+$ factory doctor -h
+exit 0
+--- stdout
+usage: factory doctor [flags]
+
+Check that the server is reachable, its version is compatible, the token is
+accepted, and the server's own checks: its database is reachable and migrated,
+the code host credential works, the sandbox runtime answers, and a cluster
+worker is active. With --worker, check this machine as a worker image instead:
+git, the agent CLIs and their logins, and the workspace directory.
+
+Each check prints pass, fail or skip, and a failure says how to fix it. Exits 1
+when any check fails, after naming every failing check. On a terminal, a failure
+with a factory command that fixes it offers to run it.
+
+Flags:
+  --harnesses STRING
+      with --worker, the agent CLIs to check (default $FACTORY_HARNESSES, else
+      claude-code,grok)
+  --output FORMAT
+      output format: table or json (default table)
+  --server URL
+      the factory server's URL, such as http://127.0.0.1:8080 (default
+      $FACTORY_SERVER)
+  --work-dir DIRECTORY
+      with --worker, the worker's checkout directory (default
+      $FACTORY_WORK_DIR, else $TMPDIR/factory-worker)
+  --worker
+      check this machine as a worker image instead of checking the server
+
+Environment:
+  FACTORY_SERVER       the server's URL when --server is not given
+  FACTORY_API_TOKEN    the API token the server was started with
+--- stderr
