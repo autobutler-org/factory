@@ -39,7 +39,9 @@ an older server does not have.
 | `factory serve` | Serve the HTTP API and the web UI. |
 | `factory status` | Work counts by state, workers by state, the item waiting in `ready` longest, and the five latest failures (`GET /api/v1/status`). |
 | `factory version` | Print the version, commit, and build date stamped into the binary. |
+| `factory work enqueue --title T [--body B] [--repos R,...] [--state design\|ready] ...` | Enqueue work by value; `--file F` (or `-` for stdin) sends a JSON item as `POST /api/v1/work` takes it. A repeat of a sourced item or an `--idempotency-key` returns the first. Enqueueing by tracker URL waits on the input adapters (#7, #18). |
 | `factory work list [--state S] [--source S] [--repo R] [--claimed-by ID] [--limit N] [--cursor C]` | A table of work items, highest priority first, then oldest. The next page's cursor goes to stderr. `--mine` waits on sign-in (#15). |
+| `factory work move <id> <state> [--reason R]` | Ask the state machine to move an item. When it refuses, the states the item may move to from where it is are printed, and the exit code is 1. |
 | `factory work show <id>` | One item, its latest step graph, and its event timeline. |
 | `factory worker` | Run the step executor in a worker sandbox. |
 | `factory workers list` | The worker registry: name, kind, state, version, last seen, and what each holds. |

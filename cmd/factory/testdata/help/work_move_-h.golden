@@ -1,0 +1,21 @@
+$ factory work move -h
+exit 0
+--- stdout
+usage: factory work move [flags] <id> <state>
+
+Ask the server to move a work item to another state. The state machine
+decides; when it refuses, the states the item may move to are printed.
+
+Flags:
+  --output FORMAT
+      output format: table or json (default table)
+  --reason STRING
+      why, recorded on the item's timeline
+  --server URL
+      the factory server's URL, such as http://127.0.0.1:8080 (default
+      $FACTORY_SERVER)
+
+Environment:
+  FACTORY_SERVER       the server's URL when --server is not given
+  FACTORY_API_TOKEN    the API token the server was started with
+--- stderr

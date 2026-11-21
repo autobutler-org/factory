@@ -15,7 +15,9 @@ Commands:
   serve           Serve the HTTP API and the web UI.
   status          Show work counts by state, workers, the oldest ready item, and recent failures.
   version         Print the version stamped into this binary.
+  work enqueue    Enqueue work by value, or from a JSON file.
   work list       List work items, highest priority first, then oldest.
+  work move       Ask to move a work item to another state.
   work show       Show one work item with its step graph and event timeline.
   worker          Run the step executor in a worker sandbox.
   workers list    List the worker registry and what each worker holds.

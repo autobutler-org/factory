@@ -78,3 +78,32 @@ func (c *Client) Status(ctx context.Context) (work.Status, error) {
 	err := c.get(ctx, "/api/v1/status", &st)
 	return st, err
 }
+
+// Enqueued is the reply to an enqueue.
+type Enqueued struct {
+	Item    db.WorkItem `json:"item"`
+	Created bool        `json:"created"`
+	Changed bool        `json:"changed"`
+	Reason  string      `json:"reason"`
+}
+
+// Enqueue enqueues work by value: item is the body POST /api/v1/work takes.
+// idempotencyKey, when set, makes a repeat return the first item.
+func (c *Client) Enqueue(ctx context.Context, item any, idempotencyKey string) (Enqueued, error) {
+	var header http.Header
+	if idempotencyKey != "" {
+		header = http.Header{"Idempotency-Key": {idempotencyKey}}
+	}
+	var out Enqueued
+	_, err := c.Call(ctx, http.MethodPost, "/api/v1/work", header, item, &out)
+	return out, err
+}
+
+// Transition asks to move an item to state to. A refusal is an *Error;
+// illegal_transition carries the states it may move to.
+func (c *Client) Transition(ctx context.Context, id, to, reason string) (db.WorkItem, error) {
+	var item db.WorkItem
+	in := map[string]string{"to": to, "reason": reason}
+	_, err := c.Call(ctx, http.MethodPost, "/api/v1/work/"+url.PathEscape(id)+"/transitions", nil, in, &item)
+	return item, err
+}
