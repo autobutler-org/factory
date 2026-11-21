@@ -87,6 +87,41 @@ kubectl -n factory rollout status deployment/factory
 kubectl -n factory get service factory
 ```
 
+## Enqueue a first item
+
+With the server running, port-forward its Service and read the API token from its Secret:
+
+```sh
+kubectl -n factory port-forward service/factory 8080:80 &
+export FACTORY_API_TOKEN="$(kubectl -n factory get secret factory-api-token -o jsonpath='{.data.token}' | base64 -d)"
+```
+
+POST one item to `/api/v1/work` with a title, a body and the repositories to work on. The `Idempotency-Key` header
+makes a repeat of the same request return the first item instead of creating another
+([api.md](api.md#enqueueing-work)):
+
+```sh
+id="$(curl -sS -X POST http://127.0.0.1:8080/api/v1/work \
+  -H "Authorization: Bearer $FACTORY_API_TOKEN" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: first-item' \
+  -d '{"title": "fix a typo in the README", "body": "README.md says \"recieve\"; make it \"receive\".", "repos": ["autobutler-org/quark"]}' \
+  | jq -r .item.id)"
+echo "$id"
+```
+
+The item starts in `ready`. The launcher plans it, moves it to `in_progress`, and starts a worker Job for it. With a
+GitHub App, each repository needs a `.factory/config.toml` on its default branch and the App installed on it;
+without one the item goes to `blocked` with the reason. Watch it:
+
+```sh
+curl -sS -H "Authorization: Bearer $FACTORY_API_TOKEN" "http://127.0.0.1:8080/api/v1/work/$id/events" | jq
+curl -sS -H "Authorization: Bearer $FACTORY_API_TOKEN" "http://127.0.0.1:8080/api/v1/work/$id/graph" | jq
+kubectl -n factory-workers get jobs -l app.kubernetes.io/name=factory-worker --watch
+```
+
+The events list the item's transitions, oldest first, with the reason for any block. The graph answers `404` until
+the item is planned, then shows each step and its state. The web UI at `http://127.0.0.1:8080/` shows the same item.
+
 ## Upgrade
 
 Run the same `helm upgrade --install` with the new `image.tag`. Each new server pod runs the migrations in its
