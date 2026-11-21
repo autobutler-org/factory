@@ -86,6 +86,45 @@ kubectl -n factory rollout status deployment/factory
 kubectl -n factory get service factory
 ```
 
+## Enqueue a first item
+
+Forward a local port to the factory Service and read the API token from its Secret:
+
+```sh
+kubectl -n factory port-forward service/factory 8080:80
+```
+
+In another shell:
+
+```sh
+export FACTORY_API_TOKEN="$(kubectl -n factory get secret factory-api-token -o jsonpath='{.data.token}' | base64 -d)"
+```
+
+Post one item with a title, a body and the repositories it touches. With a GitHub App, each repository needs a
+`.factory/config.toml` on its default branch ([config.md](config.md#factoryconfigtoml)), or the item is blocked
+when it is planned. The full request is in [api.md](api.md#enqueueing-work).
+
+```sh
+curl -sS -X POST http://127.0.0.1:8080/api/v1/work \
+  -H "Authorization: Bearer $FACTORY_API_TOKEN" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: first-item' \
+  -d '{"title": "fix a typo in the README", "body": "README.md says \"recieve\"; make it \"receive\".", "repos": ["autobutler-org/quark"]}'
+```
+
+The answer is `{"item": {...}, "created": true, ...}`; keep `item.id`. Then watch the item move: its events (oldest
+first), its step graph (`404` until the launcher has planned it), and the worker Jobs the launcher starts for it:
+
+```sh
+id=<item id>
+curl -sS -H "Authorization: Bearer $FACTORY_API_TOKEN" http://127.0.0.1:8080/api/v1/work/$id/events
+curl -sS -H "Authorization: Bearer $FACTORY_API_TOKEN" http://127.0.0.1:8080/api/v1/work/$id/graph
+kubectl -n factory-workers get jobs -l app.kubernetes.io/name=factory-worker --watch
+```
+
+An event with `to_state` `blocked` carries the reason in its `payload`, such as a missing config or a disallowed
+image. To read a worker's output, see
+[Worker Jobs](#worker-jobs).
+
 ## Upgrade
 
 Run the same `helm upgrade --install` with the new `image.tag`. Each new server pod runs the migrations in its
