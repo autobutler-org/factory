@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   # Every base branch: build both images to prove they still build, push nothing.
   pull_request:
-  # A release tag builds both images and pushes them to ghcr.io.
+  # A release tag builds both images, pushes them to ghcr.io, then deploys (deploy.yml).
   push:
     tags:
       - v*
@@ -128,3 +128,14 @@ jobs:
             DATE=${{ steps.stamp.outputs.date }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # After both images for the tag are published: upgrade the cluster to it.
+  deploy:
+    needs: publish
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy.yml
+    with:
+      tag: ${{ github.ref_name }}

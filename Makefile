@@ -237,9 +237,9 @@ check/chart: ## Lint the Helm chart and render it with the default and example v
 		exit 1
 	fi
 	helm lint --quiet deploy/chart
-	helm lint --quiet deploy/chart -f deploy/chart/values-autobutler.example.yaml
+	helm lint --quiet deploy/chart -f deploy/chart/values-autobutler.yaml
 	helm template factory deploy/chart --namespace factory >/dev/null
-	helm template factory deploy/chart --namespace factory -f deploy/chart/values-autobutler.example.yaml >/dev/null
+	helm template factory deploy/chart --namespace factory -f deploy/chart/values-autobutler.yaml >/dev/null
 
 .PHONY: check/vuln
 check/vuln: ## Fail on reachable known vulnerabilities (needs network, so not part of make check)

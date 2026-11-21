@@ -31,13 +31,14 @@ sql/queries/        the SQL sqlc compiles into internal/db
 compose.yaml        the development Postgres, on loopback
 .factory/config.toml how the factory works on this repository: the gate is `make check`, a person approves and merges
 Dockerfile          the server image (distroless, non-root); Dockerfile.worker is the agent dev container
-deploy/chart/       the Helm chart; values-autobutler.example.yaml matches our cluster (docs/operations.md)
+deploy/chart/       the Helm chart; values-autobutler.yaml matches our cluster (docs/operations.md)
 web/                the web UI (React, Vite, TypeScript; Vitest, ESLint, Prettier), built into internal/server/public (#14)
 docs/               api.md, config.md, operations.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols, worker HTTP contract and the launcher; worker.md: what `factory worker` does per step kind; codehost.md: the code host and its tokens)
 build/              build output (./build/factory); not source
 .claude/skills/     interface design skills vendored from schmeide/template (MIT; LICENSE and UPSTREAM_COMMIT inside)
 .github/workflows/  ci.yml (build, race tests, test-db and e2e on Postgres, web), check.yml (make check/go,
-                    govulncheck, attribution, chart), images.yml (builds both images; pushes them on v* tags), pr-title.yml, auto-assign-author.yml;
+                    govulncheck, attribution, chart), images.yml (builds both images; pushes them on v* tags, then
+                    calls deploy.yml), deploy.yml (upgrades our cluster to a tag), pr-title.yml, auto-assign-author.yml;
                     path-filters.yml says which paths each job reads, so Go-only changes skip the web job and the reverse
 ```
 
