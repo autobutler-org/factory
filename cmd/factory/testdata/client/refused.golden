@@ -1,0 +1,5 @@
+$ factory status
+exit 1
+--- stdout
+--- stderr
+factory status: the server refused: database unreachable (not_ready). Run 'factory doctor' if the cause is not clear.

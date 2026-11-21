@@ -1,0 +1,18 @@
+$ factory workers list -h
+exit 0
+--- stdout
+usage: factory workers list [flags]
+
+List the registered workers by name, each with its state and what it holds now.
+
+Flags:
+  --output FORMAT
+      output format: table or json (default table)
+  --server URL
+      the factory server's URL, such as http://127.0.0.1:8080 (default
+      $FACTORY_SERVER)
+
+Environment:
+  FACTORY_SERVER       the server's URL when --server is not given
+  FACTORY_API_TOKEN    the API token the server was started with
+--- stderr

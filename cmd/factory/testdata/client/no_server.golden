@@ -1,0 +1,6 @@
+$ factory status
+exit 2
+--- stdout
+--- stderr
+factory status: no server: pass --server or set FACTORY_SERVER to its URL, such as http://127.0.0.1:8080
+Run 'factory status --help' for usage.

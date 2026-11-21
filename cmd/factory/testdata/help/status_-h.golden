@@ -1,0 +1,19 @@
+$ factory status -h
+exit 0
+--- stdout
+usage: factory status [flags]
+
+Show how many work items are in each state, the workers by state, the item
+that has waited in ready longest, and the latest failures.
+
+Flags:
+  --output FORMAT
+      output format: table or json (default table)
+  --server URL
+      the factory server's URL, such as http://127.0.0.1:8080 (default
+      $FACTORY_SERVER)
+
+Environment:
+  FACTORY_SERVER       the server's URL when --server is not given
+  FACTORY_API_TOKEN    the API token the server was started with
+--- stderr

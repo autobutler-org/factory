@@ -1,0 +1,6 @@
+$ factory work list --output yaml
+exit 2
+--- stdout
+--- stderr
+factory work list: --output "yaml": use table or json
+Run 'factory work list --help' for usage.

@@ -1,0 +1,20 @@
+$ factory status
+exit 0
+--- stdout
+Work by state:
+  design       0
+  ready        1
+  in_progress  1
+  in_review    0
+  blocked      0
+  failed       1
+  completed    4
+  wont_fix     0
+
+Workers: 1 active, 0 draining, 1 gone
+
+Oldest ready: 0b8c1f9e-0000-4000-8000-000000000002 rotate the staging certificates (ready since 2026-11-18 11:00:00)
+
+Recent failures:
+  2026-11-17 10:00:00  0b8c1f9e-0000-4000-8000-000000000003  bump the linter  gate failed three times
+--- stderr
