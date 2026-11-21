@@ -27,6 +27,8 @@ to have yours used instead.
 | `PUT /api/v1/work/{id}/dependencies/{blocked_by_id}` | | `204` |
 | `DELETE /api/v1/work/{id}/dependencies/{blocked_by_id}` | | `204` |
 | `GET /api/v1/work/{id}/graph` | | `200 {"graph", "steps", "edges"}`, the item's latest step graph; `404` before it is planned |
+| `GET /api/v1/work/{id}/sandboxes` | | `200 {"sandboxes": [...]}`, the item's worker sandboxes that still exist, oldest first; see [Sandbox logs](#sandbox-logs) |
+| `GET /api/v1/work/{id}/sandboxes/{name}/logs?tail=` or `?after=` | | `200` a read of the sandbox's worker log; see [Sandbox logs](#sandbox-logs) |
 | `POST /api/v1/work/{id}/replan` | | `200` with the new graph, planned with each repository's `.factory/config.toml` read again; `409 not_replannable` unless the item is `in_progress` or `in_review`; `422 invalid_request` when a config is missing or unusable; `503 config_unavailable` when the code host cannot be read |
 
 `GET /api/v1/work` also filters on `claimed_by=<worker id>`. States and transition rules are in
@@ -44,6 +46,77 @@ Cluster workers claim steps (`POST /api/v1/workers/{id}/claim`) and report on th
 `result`, `release`, `outputs`). Either kind of claimant gets code host tokens from
 `POST /api/v1/work/{id}/codehost-token`. All of it is specified in [architecture/workers.md](architecture/workers.md), with
 the error codes workers handle (`not_claimant`, `lease_expired`, `worker_not_active`, `not_waiting`).
+
+## Sandbox logs
+
+Read-only views of the worker sandboxes the launcher ran for an item, for the web UI. They need the launcher
+(`factory serve --launcher`); without it both answer `503 sandboxes_not_configured`.
+
+**What this exposes, and to whom.** A worker's log carries the agent transcript: the model's text, the commands it
+ran and their output, and the contents of files it read. The worker never logs its own tokens, but a session can
+print anything it can read in the sandbox (#48). Until #15 these routes are open to every holder of the shared API
+token, the same as the rest of `/api/v1`, and the server logs each read in its access log.
+
+### List an item's sandboxes: `GET /api/v1/work/{id}/sandboxes`
+
+```json
+{"sandboxes": [
+  {"name": "worker-3kq9x2m7a1bz", "key": "<item id>/autobutler-org/quark", "repo": "autobutler-org/quark",
+   "image": "ghcr.io/autobutler-org/factory-worker:0.4.0", "phase": "running", "created": "2026-11-20T10:00:00Z"}
+]}
+```
+
+One entry per sandbox (Kubernetes Job) whose sandbox key starts with `<id>/`, live or ended, oldest first. `name` is
+what the log route takes; it is also the worker's name in `GET /api/v1/workers`. `key` is the chain's sandbox key,
+the `sandbox_key` of its steps in `GET /api/v1/work/{id}/graph`, and `repo` is the key without the item ID. A chain
+can have more than one sandbox over time (a new one after the last ended). `phase` is `pending`, `running`,
+`succeeded` or `failed`. An ended sandbox stays listed, with a readable log, until Kubernetes deletes its Job an
+hour after it ends; the launcher removes a live one once its chain has nothing to run. An unknown item, or one with
+no sandboxes left, answers `200 {"sandboxes": []}`.
+
+### Read a sandbox's log: `GET /api/v1/work/{id}/sandboxes/{name}/logs`
+
+Query, one of:
+
+- `tail=N` (1 to 5000, default 500 when neither is sent): the last `N` lines.
+- `after=<cursor>`: the lines after the `cursor` of an earlier response. Follow a running sandbox by polling
+  with the cursor of the last response.
+
+```json
+{
+  "sandbox": {"name": "worker-3kq9x2m7a1bz", "key": "...", "repo": "autobutler-org/quark", "image": "...", "phase": "running", "created": "..."},
+  "lines": [
+    {"time": "2026-11-20T10:00:01.123456789Z", "text": "{\"time\":\"...\",\"level\":\"INFO\",\"msg\":\"claimed a step\"}"},
+    {"time": "2026-11-20T10:00:02.5Z", "text": "...", "truncated": true}
+  ],
+  "cursor": "1763632802500000000-1",
+  "more": false,
+  "pending": null
+}
+```
+
+- `lines` are oldest first, each the worker container's output line (stdout and stderr together) without its
+  newline, with the time the container runtime received it. Worker lines are JSON (`log/slog` records and the
+  agent CLI's stream-json events) but are passed through as text. A line over 16 KiB is cut there and has
+  `"truncated": true`; the field is left out otherwise.
+- `cursor` is opaque: send it back as `after` unchanged. Reading with it returns exactly the lines after the last one
+  this response returned, none repeated and none skipped, however much time passed. With nothing new, `lines` is
+  `[]` and `cursor` is the same as the one sent.
+- `more` is true when a cap stopped the read before the end of the log: at most 5000 lines and 1 MiB of line text
+  per response. Read again with `cursor` at once to get the rest.
+- `pending` is set when the worker container has not started, so there is no log yet:
+  `{"reason": "ContainerCreating", "message": "..."}`, the container's waiting reason (`ImagePullBackOff`,
+  `NoPod` while the Job has not created its pod, and so on). `lines` is then `[]` and `cursor` is `""`: poll again
+  with `tail`, not `after`.
+- `sandbox.phase` says whether to keep polling: once it is `succeeded` or `failed` the log is complete.
+
+`404 sandbox_not_found` means the item has no such sandbox: it ended and was removed, and its log with it, or the
+name belongs to another item's sandbox. The message says so; list the item's sandboxes again. `422 invalid_request`
+for a `tail` out of range, a cursor this server did not write, or both `tail` and `after`.
+
+There is no streamed response. Following is polling, every few seconds like the rest of the UI: each read is one
+bounded request well inside the server's 60 second response limit ([config.md](config.md)), and a cursor carries
+nothing on the server, so polling survives a restart of either side.
 
 ### Enqueueing work
 
@@ -95,6 +168,7 @@ Every error has the same shape:
 | 400 | `malformed_request` | The body is not JSON, has unknown fields, or has trailing data. |
 | 401 | `unauthorized` | Missing or wrong bearer token. |
 | 404 | `not_found` | No such route, item, dependency, step, or graph. |
+| 404 | `sandbox_not_found` | The item has no such sandbox: it ended and was removed, with its log. |
 | 409 | `illegal_transition` | The state machine forbids the move. Carries `current_state` and `allowed`. |
 | 409 | `unfinished_dependencies` | Work would start while an item it is blocked by is unfinished. |
 | 409 | `outputs_pending` | Completing an item with no merged output or an open one. |
@@ -104,6 +178,7 @@ Every error has the same shape:
 | 409 | `not_waiting` | Completing a step that is not a wait step waiting for its event. |
 | 409 | `not_replannable` | Replanning an item that is not `in_progress` or `in_review`. |
 | 403 | `repo_not_allowed` | A code host token was asked for a repository the claim does not cover. |
+| 503 | `sandboxes_not_configured` | A sandbox route on a server started without `--launcher`. |
 | 503 | `codehost_not_configured` | `POST /api/v1/work/{id}/codehost-token` on a server started without a GitHub App. |
 | 413 | `body_too_large` | The body is over 1 MiB. |
 | 422 | `invalid_request` | The body parsed but a value is invalid, including an unknown `blocked_by`. |

@@ -19,7 +19,7 @@ internal/lease/     lease protocol rules (policy, claimant check, retry or give 
 internal/plan/      the pure planner: work item to step graph, and which step may run next; no SQL
 internal/api/       the HTTP API handlers and middleware (docs/api.md); no SQL, no state rules
 internal/codehost/  the code host (GitHub): pull requests, checks, merge, App tokens; codehost.Fake and fakegh/ for tests (#10)
-internal/sandbox/   starts, tracks, and destroys worker sandboxes (Kubernetes Jobs) and execs into them (#9)
+internal/sandbox/   starts, tracks, and destroys worker sandboxes (Kubernetes Jobs), execs into them (#9), reads their logs (#50)
 internal/worker/    the step executor `factory worker` runs: protocol client, heartbeat, and each step kind (#11)
 internal/harness/   drives agent CLIs (Claude Code, Grok) for a session; harness.Fake for tests
 internal/repoconfig/ parses a repository's .factory/config.toml

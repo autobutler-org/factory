@@ -140,7 +140,10 @@ kubectl -n factory-workers get jobs -l app.kubernetes.io/name=factory-worker
 kubectl -n factory-workers logs job/<name>
 ```
 
-Kubernetes deletes a finished Job an hour after it ends.
+Kubernetes deletes a finished Job an hour after it ends, and its log with it. Without cluster access, the API serves
+the same log to any holder of the API token: `GET /api/v1/work/{id}/sandboxes` lists an item's sandboxes and
+`GET /api/v1/work/{id}/sandboxes/{name}/logs` reads one ([api.md](api.md#sandbox-logs)). The server reads it with the
+`pods/log` get its Role grants in the worker namespace.
 
 ## Giving a repository its own tools
 
@@ -284,6 +287,8 @@ kubectl -n factory exec factory-postgres-0 -- pg_dump -U factory -d factory --fo
 - The load balancer serves plain HTTP with no TLS, so the API and its bearer token cross the network unencrypted.
   This must be resolved before real use.
 - One shared bearer token serves both the API and the workers until #15.
+- Every holder of that token can read every worker's log, which carries the agent transcript: command output and
+  file contents the session printed. Logs are not kept after a worker Job is deleted.
 - The server has no `/metrics` endpoint yet (#13), so the PodMonitor has nothing to scrape.
 - No dashboards or alerts.
 - No NetworkPolicy for the server pods yet.

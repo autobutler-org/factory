@@ -14,17 +14,20 @@ import (
 
 // Fake is an in-memory Runtime for tests. Ensure creates a pending sandbox;
 // tests move it with SetPhase. Exec on a running sandbox writes
-// "<name>: <command>\n" to Stdout, then copies Stdin to Stdout.
+// "<name>: <command>\n" to Stdout, then copies Stdin to Stdout. Logs
+// returns the lines given to AppendLog, read the way the Kubernetes API
+// serves them, or a *NotStartedError while the sandbox is pending.
 type Fake struct {
 	mu        sync.Mutex
 	sandboxes map[string]Sandbox
+	logs      map[string][]LogLine
 }
 
 var _ Runtime = (*Fake)(nil)
 
 // NewFake returns an empty Fake.
 func NewFake() *Fake {
-	return &Fake{sandboxes: map[string]Sandbox{}}
+	return &Fake{sandboxes: map[string]Sandbox{}, logs: map[string][]LogLine{}}
 }
 
 // SetPhase moves the named sandbox to phase, creating it if needed.
@@ -86,6 +89,7 @@ func (f *Fake) Destroy(_ context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.sandboxes, name)
+	delete(f.logs, name)
 	return nil
 }
 
@@ -113,4 +117,39 @@ func (f *Fake) Exec(ctx context.Context, name string, req ExecRequest) error {
 		}
 	}
 	return nil
+}
+
+// AppendLog adds a line to the named sandbox's log.
+func (f *Fake) AppendLog(name string, at time.Time, text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.logs[name] = append(f.logs[name], LogLine{Time: at, Text: text})
+}
+
+// Logs implements Runtime. Like the Kubernetes API, it serves the last
+// q.Tail lines, or the lines from q.After's whole second on.
+func (f *Fake) Logs(ctx context.Context, name string, q LogQuery) (Logs, error) {
+	sb, err := f.Status(ctx, name)
+	if err != nil {
+		return Logs{}, err
+	}
+	if sb.Phase == PhasePending {
+		return Logs{}, &NotStartedError{Reason: "ContainerCreating"}
+	}
+	f.mu.Lock()
+	lines := slices.Clone(f.logs[name])
+	f.mu.Unlock()
+	var after Cursor
+	if q.After == nil {
+		lines = lines[max(len(lines)-q.Tail, 0):]
+	} else {
+		after = *q.After
+		since := after.Time.Truncate(time.Second)
+		lines = slices.DeleteFunc(lines, func(l LogLine) bool { return l.Time.Before(since) })
+	}
+	var b strings.Builder
+	for _, l := range lines {
+		fmt.Fprintf(&b, "%s %s\n", l.Time.UTC().Format(time.RFC3339Nano), l.Text)
+	}
+	return readLog(strings.NewReader(b.String()), after)
 }
