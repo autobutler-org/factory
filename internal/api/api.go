@@ -1,6 +1,7 @@
 // Package api is factory's HTTP JSON API: /healthz, /readyz and the versioned
-// routes under /api/v1. Handlers only decode the request, call the work
-// service, and encode the result; they hold no SQL and no state rules.
+// routes under /api/v1. Every other path goes to Config.UI, the web UI, when
+// one is set. Handlers only decode the request, call the work service, and
+// encode the result; they hold no SQL and no state rules.
 //
 // Every error has one shape, {"error": {"code", "message", "request_id", ...}},
 // with a stable machine-readable code. The package also adds request IDs,
@@ -49,6 +50,10 @@ type Config struct {
 	// MintToken mints a code host token for one repository. Nil means no
 	// GitHub App is configured, and codehost-token requests get 503.
 	MintToken func(ctx context.Context, repo string) (codehost.Token, error)
+	// UI, when set, serves every path outside /api/v1, /healthz and /readyz,
+	// without the token: the web UI asks for the token itself. Nil answers
+	// those paths with a JSON 404.
+	UI http.Handler
 }
 
 type ctxKey struct{}
@@ -63,9 +68,13 @@ func New(cfg Config) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /readyz", h.readyz)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, r, http.StatusNotFound, "not_found", "no route for "+r.Method+" "+r.URL.Path, nil)
-	})
+	if cfg.UI != nil {
+		mux.Handle("/", cfg.UI)
+	} else {
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, r, http.StatusNotFound, "not_found", "no route for "+r.Method+" "+r.URL.Path, nil)
+		})
+	}
 
 	v1 := http.NewServeMux()
 	v1.HandleFunc("GET /api/v1/work", h.listWork)

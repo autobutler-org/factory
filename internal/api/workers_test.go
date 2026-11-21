@@ -99,3 +99,58 @@ func TestWorkerProtocol(t *testing.T) {
 		t.Errorf("unknown worker heartbeat: %d", resp.StatusCode)
 	}
 }
+
+type holdJSON struct {
+	WorkItemID string `json:"work_item_id"`
+	Title      string `json:"title"`
+	StepID     string `json:"step_id"`
+	StepKey    string `json:"step_key"`
+}
+
+// GET /api/v1/workers says what each worker holds: an item a developer
+// claimed whole, or the step a cluster worker is running.
+func TestWorkerHolds(t *testing.T) {
+	c := newServer(t, nil)
+	cluster := c.worker("cluster-1")
+	var dev worker
+	c.do(http.MethodPost, "/api/v1/workers", `{"name":"dev","kind":"local"}`, &dev)
+	idle := c.worker("idle")
+
+	local := c.enqueue(`{"title":"by hand"}`).Item
+	if resp := c.do(http.MethodPost, "/api/v1/work/"+local.ID+"/claim", `{"worker_id":"`+dev.ID+`"}`, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("local claim: %d", resp.StatusCode)
+	}
+	c.enqueue(`{"title":"by the cluster","repos":["o/r"]}`)
+	claim, ok := cluster.claim("")
+	if !ok {
+		t.Fatal("cluster worker got no step")
+	}
+
+	var list struct {
+		Workers []struct {
+			worker
+			Holds []holdJSON `json:"holds"`
+		} `json:"workers"`
+	}
+	if resp := c.do(http.MethodGet, "/api/v1/workers", "", &list); resp.StatusCode != http.StatusOK {
+		t.Fatalf("list workers: %d", resp.StatusCode)
+	}
+	holds := map[string][]holdJSON{}
+	for _, w := range list.Workers {
+		if w.Holds == nil {
+			t.Errorf("worker %s: holds is null, want a list", w.Name)
+		}
+		holds[w.ID] = w.Holds
+	}
+	want := map[string][]holdJSON{
+		dev.ID:     {{WorkItemID: local.ID, Title: "by hand"}},
+		cluster.id: {{WorkItemID: claim.Item.ID, Title: "by the cluster", StepID: claim.Step.ID, StepKey: claim.Step.Key}},
+		idle.id:    {},
+	}
+	for id, w := range want {
+		got := holds[id]
+		if len(got) != len(w) || (len(w) == 1 && got[0] != w[0]) {
+			t.Errorf("worker %s holds %+v, want %+v", id, got, w)
+		}
+	}
+}

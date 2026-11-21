@@ -41,6 +41,19 @@ POSTGRES_PORT ?= 5432
 export POSTGRES_PORT
 TEST_DATABASE_URL ?= postgres://factory:factory@127.0.0.1:$(POSTGRES_PORT)/factory?sslmode=disable
 
+# The web UI's Node version is pinned once, in web/.nvmrc. A shell without nvm
+# loaded still finds nvm's copy of that version.
+NODE_VERSION := $(shell cat web/.nvmrc 2>/dev/null)
+NVM_DIR ?= $(HOME)/.nvm
+NODE_BIN ?= $(shell { \
+	ls -1 $(NVM_DIR)/versions/node/v$(NODE_VERSION)/bin/node 2>/dev/null || true; \
+	command -v node 2>/dev/null || true; \
+	} | head -1)
+ifneq (,$(NODE_BIN))
+export PATH := $(patsubst %/,%,$(dir $(NODE_BIN))):$(PATH)
+endif
+NPM := npm --prefix web
+
 # Rejected in a pull request's title, description, and commit messages.
 ATTRIBUTION_PATTERN := generated (with|by) \[?claude|co-authored-by:.*(claude|anthropic)|claude\.ai/code/session_
 
@@ -53,11 +66,31 @@ setup: ## Download modules and build the dev tools pinned in go.mod
 	echo "Ready. Run \`make help\` to see the targets."
 
 .PHONY: watch
-watch: ## Rebuild and restart ./build/factory on every change
+watch: ## Rebuild and restart ./build/factory on every Go change (the UI: make serve/web)
 	$(GO) tool air \
-		--build.cmd "$(MAKE) build" \
+		--build.cmd "$(MAKE) build/go" \
 		--build.entrypoint "$(EXE)" \
-		--build.exclude_dir ".github,build,docs,tmp"
+		--build.exclude_dir ".github,build,docs,tmp,web,internal/server/public"
+
+# Installs web/node_modules from the lockfile when it changed.
+web/node_modules/.installed: web/package.json web/package-lock.json
+	if ! command -v node >/dev/null 2>&1; then
+		echo "node is not on PATH. Install Node $(NODE_VERSION) (\`nvm install $(NODE_VERSION)\`; web/.nvmrc pins it), then re-run."
+		exit 1
+	fi
+	if [[ "$$(node --version)" != "v$(NODE_VERSION)" ]]; then
+		echo "Warning: node is $$(node --version) but web/.nvmrc pins v$(NODE_VERSION). Run \`nvm install $(NODE_VERSION)\` if anything below fails."
+	fi
+	$(NPM) ci
+	touch $@
+
+.PHONY: setup/web
+setup/web: web/node_modules/.installed ## Install the web UI's npm dependencies from web/package-lock.json
+
+.PHONY: serve/web
+serve/web: web/node_modules/.installed ## Run the web UI's Vite dev server, proxying /api to a running factory serve (FACTORY_URL)
+	echo "Proxying /api to $${FACTORY_URL:-http://127.0.0.1:8080}. Start \`factory serve\` there yourself; the UI asks for its FACTORY_API_TOKEN."
+	$(NPM) run dev
 
 .PHONY: serve/postgres
 serve/postgres: ## Start the development Postgres from compose.yaml in the background (stop: make clean/postgres)
@@ -75,10 +108,20 @@ clean/postgres: ## Stop the development Postgres and keep its data
 ##@ Build
 
 .PHONY: build
-build: build/go ## Build everything
+build: build/web build/go ## Build ./build/factory with the web UI embedded
+
+# Vite writes into internal/server/public, which build/go embeds. stub.txt is
+# kept so a checkout without a web build still compiles.
+.PHONY: build/web
+build/web: clean/web web/node_modules/.installed ## Type-check and build the web UI into internal/server/public
+	$(NPM) run build
+
+.PHONY: clean/web
+clean/web: ## Remove the web build from internal/server/public, keeping stub.txt
+	find internal/server/public -mindepth 1 ! -name stub.txt -delete
 
 .PHONY: build/go
-build/go: ## Build ./build/factory with the version stamped in
+build/go: ## Build ./build/factory with the version stamped in and whatever web build is in internal/server/public
 	mkdir -p ./build
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(EXE) $(MAIN)
 
@@ -102,7 +145,7 @@ build/image/worker: ## Build the worker image, the agent dev container (WORKER_I
 	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) -t $(WORKER_IMAGE) -f Dockerfile.worker .
 
 .PHONY: clean
-clean: ## Remove build output
+clean: clean/web ## Remove build output
 	rm -rf ./build ./tmp
 
 ##@ Test
@@ -122,6 +165,10 @@ test/db: ## Run every test, the database tests included, against Postgres (start
 test/e2e: ## Run the worker's end-to-end tests against Postgres (start it with make serve/postgres)
 	FACTORY_DATABASE_URL='$(TEST_DATABASE_URL)' $(GO) test -tags e2e -race -count=1 -run '^TestE2E' ./internal/worker
 
+.PHONY: test/web
+test/web: web/node_modules/.installed ## Run the web UI's component tests
+	$(NPM) test
+
 .PHONY: test/race
 test/race: ## Run the tests with the race detector
 	$(GO) test -race ./...
@@ -129,7 +176,16 @@ test/race: ## Run the tests with the race detector
 ##@ Code Quality
 
 .PHONY: check
-check: check/format check/tidy check/lint check/sqlc check/migrations test ## Check formatting, tidiness, lint, and tests without changing files
+check: check/go check/web test/web ## Check formatting, tidiness, lint, and tests of Go and the web UI without changing files
+
+.PHONY: check/go
+check/go: check/format check/tidy check/lint check/sqlc check/migrations test ## The Go half of make check
+
+.PHONY: check/web
+check/web: web/node_modules/.installed ## Lint, type-check, and check the formatting of the web UI
+	$(NPM) run lint:eslint || { echo "ESLint failed (run \`make fix/web\` for what can be fixed automatically)."; exit 1; }
+	$(NPM) run lint:types
+	$(NPM) run lint:prettier || { echo "Web files need formatting (run \`make fix/web\`)."; exit 1; }
 
 .PHONY: check/format
 check/format: ## Fail if any Go file needs formatting
@@ -231,6 +287,11 @@ format: ## Format Go code (gci, gofumpt, goimports)
 fix: ## Apply lint autofixes, then format
 	$(GO) tool golangci-lint run --fix $(GOLINT_ARGS) ./...
 	$(MAKE) format
+
+.PHONY: fix/web
+fix/web: web/node_modules/.installed ## Apply ESLint autofixes and Prettier to the web UI
+	$(NPM) run fix:eslint
+	$(NPM) run fix:prettier
 
 .PHONY: tidy
 tidy: ## Run go mod tidy

@@ -31,3 +31,7 @@ devenv.local.nix
 
 # direnv
 .direnv
+
+# make build/web output; the server embeds it.
+/internal/server/public/*
+!/internal/server/public/stub.txt

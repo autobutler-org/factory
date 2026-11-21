@@ -17,6 +17,7 @@ import (
 	"github.com/autobutler-org/factory/internal/db"
 	"github.com/autobutler-org/factory/internal/lease"
 	"github.com/autobutler-org/factory/internal/sandbox"
+	"github.com/autobutler-org/factory/internal/server"
 	"github.com/autobutler-org/factory/internal/work"
 )
 
@@ -155,7 +156,7 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			"not their .factory/config.toml. Set --github-app-id and --github-app-key-file to read it")
 	}
 	srv := &http.Server{
-		Handler:           api.New(api.Config{Work: svc, Ready: ready, Token: token, Logger: logger, MintToken: mintToken}),
+		Handler:           api.New(api.Config{Work: svc, Ready: ready, Token: token, Logger: logger, MintToken: mintToken, UI: server.UI(server.Public())}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,

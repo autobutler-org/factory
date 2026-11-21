@@ -1,6 +1,11 @@
-# The images build from go.mod, go.sum, cmd/, and internal/ only.
+# The images build from go.mod, go.sum, cmd/, internal/ and web/ only.
 *
 !go.mod
 !go.sum
 !cmd/
 !internal/
+!web/
+# The server image builds the UI itself; a local build or node_modules must not leak in.
+internal/server/public/*
+!internal/server/public/stub.txt
+web/node_modules/

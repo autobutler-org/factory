@@ -86,13 +86,48 @@ func (s *Service) RegisterWorker(ctx context.Context, in WorkerInput) (db.Worker
 	return w, nil
 }
 
-// Workers lists the registry by name.
-func (s *Service) Workers(ctx context.Context) ([]db.Worker, error) {
-	workers, err := db.New(s.pool).ListWorkers(ctx)
+// WorkerView is a registered worker with what it holds now.
+type WorkerView struct {
+	db.Worker
+	Holds []Hold `json:"holds"`
+}
+
+// Hold is one thing a worker holds: a whole item under a local claim, or one
+// step of an item's graph (StepID and StepKey set) under a step claim.
+type Hold struct {
+	WorkItemID string `json:"work_item_id"`
+	Title      string `json:"title"`
+	StepID     string `json:"step_id,omitempty"`
+	StepKey    string `json:"step_key,omitempty"`
+}
+
+// Workers lists the registry by name, each worker with what it holds.
+func (s *Service) Workers(ctx context.Context) ([]WorkerView, error) {
+	q := db.New(s.pool)
+	workers, err := q.ListWorkers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list workers: %w", err)
 	}
-	return workers, nil
+	items, err := q.ListHeldItems(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list held items: %w", err)
+	}
+	steps, err := q.ListHeldSteps(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list held steps: %w", err)
+	}
+	holds := map[string][]Hold{}
+	for _, h := range items {
+		holds[h.WorkerID] = append(holds[h.WorkerID], Hold{WorkItemID: h.WorkItemID, Title: h.Title})
+	}
+	for _, h := range steps {
+		holds[h.WorkerID] = append(holds[h.WorkerID], Hold{WorkItemID: h.WorkItemID, Title: h.Title, StepID: h.StepID, StepKey: h.StepKey})
+	}
+	views := make([]WorkerView, len(workers))
+	for i, w := range workers {
+		views[i] = WorkerView{Worker: w, Holds: append([]Hold{}, holds[w.ID]...)}
+	}
+	return views, nil
 }
 
 // Policy is the lease policy this service runs with.
