@@ -35,6 +35,7 @@ deploy/chart/       the Helm chart; values-autobutler.example.yaml matches our c
 web/                the web UI (React, Vite, TypeScript; Vitest, ESLint, Prettier), built into internal/server/public (#14)
 docs/               api.md, config.md, operations.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols, worker HTTP contract and the launcher; worker.md: what `factory worker` does per step kind; codehost.md: the code host and its tokens)
 build/              build output (./build/factory); not source
+.claude/skills/     interface design skills vendored from schmeide/template (MIT; LICENSE and UPSTREAM_COMMIT inside)
 .github/workflows/  ci.yml (build, race tests, test-db and e2e on Postgres, web), check.yml (make check/go,
                     govulncheck, attribution, chart), images.yml (builds both images; pushes them on v* tags), pr-title.yml, auto-assign-author.yml;
                     path-filters.yml says which paths each job reads, so Go-only changes skip the web job and the reverse
@@ -130,6 +131,23 @@ Write plainly, in American spelling.
 - Build what the issue asks for. No flags, config keys, packages, or abstractions nobody requested.
 - Advice is not a request for edits. When asked to review, explain, or plan, answer and touch no files.
 - Never start, stop, or restart a server or worker yourself, and do not run `make watch`. Tests are fine to run.
+
+## Web UI
+
+The interface skills in `.claude/skills/` are vendored unchanged from
+[schmeide/template](https://github.com/schmeide/template); `UPSTREAM_COMMIT` names the commit. To update them, copy the
+directory again and change that file; do not edit a skill in place. An agent that does not load them as skills reads a
+skill's `SKILL.md` and the files it links, and follows its procedure and report format.
+
+- **`interface-review`** runs on every pull request that touches `web/`. Resolve what it reports, or say in the pull
+  request why a finding was left.
+- **`better-interface`** reviews the whole UI or one screen and ranks the findings. Run it before a redesign.
+- **`better-accessibility`**, **`better-layout`**, **`better-colors`**, **`better-typography`**, **`better-ui`**, and
+  **`better-writing`** are the area skills `better-interface` routes to; use one directly when fixing that area.
+- **`state-machine`** and **`break`** enumerate and stress a component's states (loading, empty, error, 401, long
+  text, many items). Run them on a new component with more than a couple of states, and add a test for each state
+  they turn up.
+- `variant`, `explain-interface`, `build-design`, and `afk` are vendored with the rest but not part of the workflow.
 
 ## Database
 
