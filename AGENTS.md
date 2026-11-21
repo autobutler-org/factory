@@ -28,6 +28,7 @@ cmd/fakeagent/      a scripted stand-in for an agent CLI, for tests
 internal/launcher/  the server's launcher: plans ready items, starts one sandbox per runnable chain, runs merge (#17)
 sql/queries/        the SQL sqlc compiles into internal/db
 compose.yaml        the development Postgres, on loopback
+.factory/config.toml how the factory works on this repository: the gate is `make check`, a person approves and merges
 Dockerfile          the server image (distroless, non-root); Dockerfile.worker is the agent dev container
 deploy/chart/       the Helm chart; values-autobutler.example.yaml matches our cluster (docs/operations.md)
 web/                the web UI, embedded in the binary (#14)
