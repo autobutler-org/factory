@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,8 @@ import (
 	"github.com/autobutler-org/factory/internal/work"
 )
 
+var botIdentity = codehost.Identity{Name: "app[bot]", Email: "7+app[bot]@users.noreply.github.com"}
+
 func TestCodehostToken(t *testing.T) {
 	var logs bytes.Buffer
 	pool := dbtest.NewDB(t)
@@ -28,6 +31,7 @@ func TestCodehostToken(t *testing.T) {
 		MintToken: func(_ context.Context, repo string) (codehost.Token, error) {
 			return codehost.Token{Token: "ghs_secret_for_" + repo, ExpiresAt: expires}, nil
 		},
+		CommitIdentity: func(context.Context) (codehost.Identity, error) { return botIdentity, nil },
 	}))
 	t.Cleanup(srv.Close)
 	c := &client{t: t, srv: srv}
@@ -48,12 +52,14 @@ func TestCodehostToken(t *testing.T) {
 	}
 
 	var got struct {
-		Repo      string    `json:"repo"`
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
+		Repo           string             `json:"repo"`
+		Token          string             `json:"token"`
+		ExpiresAt      time.Time          `json:"expires_at"`
+		CommitIdentity *codehost.Identity `json:"commit_identity"`
 	}
 	if resp := c.do(http.MethodPost, path, `{"worker_id":"`+holder.ID+`","repo":"o/a"}`, &got); resp.StatusCode != http.StatusOK ||
-		got.Token != "ghs_secret_for_o/a" || got.Repo != "o/a" || !got.ExpiresAt.Equal(expires) {
+		got.Token != "ghs_secret_for_o/a" || got.Repo != "o/a" || !got.ExpiresAt.Equal(expires) ||
+		got.CommitIdentity == nil || *got.CommitIdentity != botIdentity {
 		t.Fatalf("holder: %d %+v", resp.StatusCode, got)
 	}
 	for _, tc := range []struct {
@@ -83,5 +89,39 @@ func TestCodehostTokenWithoutAnApp(t *testing.T) {
 	var e apiError
 	if resp := c.do(http.MethodPost, "/api/v1/work/"+it.ID+"/codehost-token", `{"worker_id":"w","repo":"o/a"}`, &e); resp.StatusCode != http.StatusServiceUnavailable || e.Error.Code != "codehost_not_configured" {
 		t.Errorf("%d %q, want 503 codehost_not_configured", resp.StatusCode, e.Error.Code)
+	}
+}
+
+// TestCodehostTokenWithoutAnIdentity hands out the token without a commit
+// identity when the lookup fails, and logs why.
+func TestCodehostTokenWithoutAnIdentity(t *testing.T) {
+	var logs bytes.Buffer
+	srv := httptest.NewServer(api.New(api.Config{
+		Work:   work.New(dbtest.NewDB(t)),
+		Ready:  func(context.Context) error { return nil },
+		Token:  token,
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+		MintToken: func(context.Context, string) (codehost.Token, error) {
+			return codehost.Token{Token: "ghs_x"}, nil
+		},
+		CommitIdentity: func(context.Context) (codehost.Identity, error) {
+			return codehost.Identity{}, errors.New("github down")
+		},
+	}))
+	t.Cleanup(srv.Close)
+	c := &client{t: t, srv: srv}
+	var w worker
+	c.do(http.MethodPost, "/api/v1/workers", `{"name":"w","kind":"cluster"}`, &w)
+	it := c.enqueue(`{"title":"x","repos":["o/a"]}`).Item
+	c.do(http.MethodPost, "/api/v1/workers/"+w.ID+"/claim", "", nil)
+	var got map[string]any
+	if resp := c.do(http.MethodPost, "/api/v1/work/"+it.ID+"/codehost-token", `{"worker_id":"`+w.ID+`","repo":"o/a"}`, &got); resp.StatusCode != http.StatusOK || got["token"] != "ghs_x" {
+		t.Fatalf("%d %v, want the token", resp.StatusCode, got)
+	}
+	if _, ok := got["commit_identity"]; ok {
+		t.Errorf("reply = %v, want no commit_identity", got)
+	}
+	if !strings.Contains(logs.String(), "github down") {
+		t.Errorf("the log does not say why:\n%s", logs.String())
 	}
 }

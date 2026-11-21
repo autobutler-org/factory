@@ -238,11 +238,10 @@ func (e *executor) stage(ctx context.Context, claim Claim, stage string, outputs
 }
 
 // tokens is the code host token source for repo on the claim's item.
-func (e *executor) tokens(claim Claim, repo string) func(context.Context) (string, error) {
-	r := &codehost.RefreshingToken{Fetch: func(ctx context.Context) (codehost.Token, error) {
+func (e *executor) tokens(claim Claim, repo string) *codehost.RefreshingToken {
+	return &codehost.RefreshingToken{Fetch: func(ctx context.Context) (codehost.Token, error) {
 		return e.cfg.Client.CodehostToken(ctx, claim.Item.ID, e.workerID, repo)
 	}}
-	return r.Get
 }
 
 // run runs one claimed step by kind.

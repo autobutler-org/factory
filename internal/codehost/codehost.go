@@ -3,8 +3,9 @@
 // queue, branch protection, one file at a branch (for the server to read a
 // repository's config), and GitHub App installation tokens. GitHub
 // implements Host over HTTP for one repository, asking for the token before
-// each call; TokenMinter mints those tokens and RefreshingToken keeps one
-// fresh. Fake implements Host in memory for tests, and the fakegh
+// each call; TokenMinter mints those tokens and looks up the App bot's commit
+// identity, IdentityCache keeps that identity, and RefreshingToken keeps one
+// token fresh. Fake implements Host in memory for tests, and the fakegh
 // subpackage is a fake GitHub API server.
 //
 // It knows nothing about trackers. Work can come from any tracker or from a

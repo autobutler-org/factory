@@ -110,9 +110,15 @@ to push, and a review session not to edit, but nothing enforces it.
 - **Agent sessions** see only the base environment (`PATH`, `HOME`, locale, proxy and CA settings) plus `ANTHROPIC_*`,
   `CLAUDE_*` and `XAI_*`. **The gate and git** see only the base environment, with `HOME` and `TMPDIR` pointed at a
   scratch directory for the gate; the model API key never reaches them. Nothing named `FACTORY_*` reaches either.
-- Commits are authored and committed as `factory <factory@users.noreply.github.com>`. Every commit carries a
-  `Signed-off-by` trailer for that identity (`git commit -s`), always, so a repository that requires sign-off (DCO)
-  accepts the branch. The trailer is not copied into the pull request body. Commits are not GPG signed.
+- Commits are authored and committed as the identity the server sends beside the code host token
+  (`commit_identity`): the GitHub App's bot, for example
+  `autobutler-factory[bot] <342131938+autobutler-factory[bot]@users.noreply.github.com>`, so GitHub links them to the
+  bot account. git reads it with the token on every command, so it is in place before the first commit (implement,
+  fix); the workspace step makes none. A reply without one (an older server, or a lookup that failed, see
+  [codehost.md](codehost.md#commit-identity)) falls back to `factory <factory@users.noreply.github.com>`. Every commit
+  carries a `Signed-off-by` trailer for the committing identity (`git commit -s`), always, so a repository that
+  requires sign-off (DCO) accepts the branch. The trailer is not copied into the pull request body. Commits are not
+  GPG signed.
 
 ## Configuration
 

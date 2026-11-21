@@ -148,8 +148,15 @@ repository, valid for an hour, when its claim covers that repository: a live cla
 params name `repo`, or a developer's live claim on the whole item when the item's `repos` contain it.
 
 ```json
-{"repo": "autobutler-org/quark", "token": "ghs_...", "expires_at": "2026-11-18T13:00:00Z"}
+{
+  "repo": "autobutler-org/quark", "token": "ghs_...", "expires_at": "2026-11-18T13:00:00Z",
+  "commit_identity": {"name": "autobutler-factory[bot]", "email": "342131938+autobutler-factory[bot]@users.noreply.github.com"}
+}
 ```
+
+`commit_identity` is optional: the git author, committer and sign-off for the worker's commits. A worker that does
+not know it ignores it; a reply without it means commit as `factory <factory@users.noreply.github.com>`. See
+[codehost.md](codehost.md#commit-identity).
 
 Ask again before it expires. A worker with no claim on the item gets `409 not_claimant`, one whose step lease ran
 out gets `409 lease_expired`, a repository the claim does not cover (such as another repository of the same item)

@@ -78,7 +78,7 @@ sequenceDiagram
         GH-->>F: installation id
         F->>GH: POST /app/installations/{id}/access_tokens {repositories: [name], permissions}
         GH-->>F: token, expires_at (one hour)
-        F-->>W: 200 {repo, token, expires_at}
+        F-->>W: 200 {repo, token, expires_at, commit_identity}
     end
     W->>GH: git push, open pull request, ... (Bearer token)
     Note over W: RefreshingToken asks again 5 minutes before expiry
@@ -105,6 +105,23 @@ Each token is limited to the one repository and to `contents: write`, `pull_requ
 `merge_queues: write`, `checks: read`, `actions: read` and `administration: read`. It asks for no issue
 permission. The private key is read once at startup from `--github-app-key-file` and never logged; the token
 appears only in the response body.
+
+### Commit identity
+
+The token reply also carries `commit_identity`, who the worker commits as: the App's bot account, name
+`<slug>[bot]` and email `<bot user id>+<slug>[bot]@users.noreply.github.com`. Nothing about our App is hardcoded.
+`TokenMinter.Identity` reads the slug from `GET /app` with the App JWT and the bot's user id from its public profile,
+`GET /users/<slug>[bot]`, without auth (the App JWT is for `/app` endpoints only). For our App that is
+`autobutler-factory[bot] <342131938+autobutler-factory[bot]@users.noreply.github.com>`.
+
+The lookup runs on the first token request, not at startup, and `IdentityCache` keeps the first success for the
+life of the process. When GitHub cannot answer, that reply goes without `commit_identity`, the server logs why, and
+the next request tries again; the worker commits as `factory <factory@users.noreply.github.com>` until its token
+is refreshed. A server without a GitHub App mints no tokens at all.
+
+The noreply domain is github.com's. On a GitHub Enterprise Server (`--github-api-url` other than
+`https://api.github.com`) it may differ, so the server does not guess: it logs a warning at startup and sends no
+identity, and workers commit as `factory`.
 
 If the sandbox moves behind an egress gateway (#9), the gateway can call the same endpoint and inject the token,
 so it never enters the sandbox. That swap is not built.

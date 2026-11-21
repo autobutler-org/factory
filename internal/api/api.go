@@ -52,6 +52,10 @@ type Config struct {
 	// MintToken mints a code host token for one repository. Nil means no
 	// GitHub App is configured, and codehost-token requests get 503.
 	MintToken func(ctx context.Context, repo string) (codehost.Token, error)
+	// CommitIdentity is who workers commit as, sent beside each code host
+	// token. Nil, or a failed lookup, sends none, and the worker commits as
+	// its built-in factory identity.
+	CommitIdentity func(ctx context.Context) (codehost.Identity, error)
 	// UI, when set, serves every path outside /api/v1, /healthz and /readyz,
 	// without the token: the web UI asks for the token itself. Nil answers
 	// those paths with a JSON 404.
