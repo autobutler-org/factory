@@ -160,7 +160,7 @@ func TestClaudeRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "args=--print --output-format stream-json --verbose --permission-mode acceptEdits\npwd=" + realDir + "\nprompt=--fix the bug\n"
+	want := "args=--print --output-format stream-json --verbose --permission-mode bypassPermissions\npwd=" + realDir + "\nprompt=--fix the bug\n"
 	if out.String() != want {
 		t.Errorf("output = %q, want %q", out.String(), want)
 	}
