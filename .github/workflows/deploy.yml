@@ -1,0 +1,111 @@
+name: deploy
+
+# Upgrades the factory release in the autobutler-factory AKS cluster to a release tag.
+# images.yml calls this after both images for a v* tag are published. Run it by hand with
+# an earlier tag to roll back. docs/operations.md, "Deploying a release", has the setup.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to deploy, for example v1.2.3
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to deploy, for example v1.2.3 (an earlier one rolls back)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The environment holds the Azure variables, and the deploy identity trusts only its
+    # OIDC subject (repo:...:environment:production).
+    environment: production
+    # One deploy at a time, and a running one is never canceled: Helm would leave the
+    # release pending-upgrade.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ inputs.tag }}
+      RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
+      CLUSTER: ${{ vars.AKS_CLUSTER_NAME }}
+    steps:
+      - name: Check the tag
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$TAG' is not a release tag. Pass a tag like v1.2.3 that images.yml has published."
+            exit 1
+          fi
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AKS_RESOURCE_GROUP AKS_CLUSTER_NAME; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Variable $name is not set on the production environment. docs/operations.md, Deploying a release, lists them."
+              exit 1
+            fi
+          done
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
+          AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME }}
+      # The chart and values come from the tag being deployed, not from the branch the
+      # workflow ran on.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/use-kubelogin@0ce7c36141aa27d4934872cf00b0120804c98a29 # v1.3
+        with:
+          kubelogin-version: v0.2.22
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v4.3.2
+      # Local accounts are off: the kubeconfig gets a token for the logged-in identity
+      # from kubelogin, through the Azure CLI session.
+      - name: Kubeconfig
+        run: |
+          az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$CLUSTER" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+      # A release that does not become ready within the timeout is rolled back to the
+      # previous revision, and the job fails. --rollback-on-failure is Helm 4's --atomic.
+      - name: Upgrade
+        run: |
+          helm upgrade --install factory deploy/chart --namespace factory \
+            -f deploy/chart/values-autobutler.yaml \
+            --set image.tag="$TAG" \
+            --rollback-on-failure --wait --timeout 10m
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## factory $TAG"
+            echo '```'
+            helm history factory --namespace factory --max 5
+            echo
+            kubectl -n factory rollout status deployment/factory --timeout=2m
+            echo
+            echo "server image: $(kubectl -n factory get deployment factory -o jsonpath='{.spec.template.spec.containers[0].image}')"
+            echo "worker image: $(kubectl -n factory get deployment factory -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="FACTORY_LAUNCHER_IMAGE")].value}')"
+            kubectl -n factory get pods -l app.kubernetes.io/instance=factory \
+              -o custom-columns='POD:.metadata.name,READY:.status.containerStatuses[*].ready,IMAGE:.status.containerStatuses[*].image'
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      # No public address is assumed (#56): ask the API server to proxy to the Service.
+      - name: Check /readyz
+        run: |
+          body="$(kubectl get --raw /api/v1/namespaces/factory/services/factory:http/proxy/readyz)"
+          echo "/readyz: $body"

@@ -1,8 +1,8 @@
 # Operations
 
 How to install and run factory on Kubernetes with the Helm chart in [`deploy/chart`](../deploy/chart). The
-example values for our cluster are in
-[`deploy/chart/values-autobutler.example.yaml`](../deploy/chart/values-autobutler.example.yaml).
+values for our cluster are in
+[`deploy/chart/values-autobutler.yaml`](../deploy/chart/values-autobutler.yaml).
 
 ## What gets installed
 
@@ -24,7 +24,7 @@ In the worker namespace (`workers.namespace`, default `factory-workers`):
   delete; `pods` get, list; `pods/log` get; `pods/exec` create, get.
 - A policy for worker pods (label `app.kubernetes.io/name: factory-worker`): no ingress; egress to cluster DNS, the
   factory server pods on 8080, and HTTPS. With `networkPolicy.cilium=true` it is a `CiliumNetworkPolicy` that limits
-  HTTPS to the hosts in `workers.egress.fqdns` (GitHub and the model API by default; the example values add the
+  HTTPS to the hosts in `workers.egress.fqdns` (GitHub and the model API by default; our cluster's values add the
   package registries a gate downloads from, such as `pub.dev`, `proxy.golang.org` and `registry.npmjs.org`. A gate
   that needs another host fails at its first download: add the host to that list and upgrade the release). Otherwise it is a plain NetworkPolicy that
   allows 443 to any address outside `workers.egress.denyCidrs`.
@@ -74,13 +74,14 @@ The two token Secrets must hold the same value. To rotate it, update both and re
 
 ```sh
 helm upgrade --install factory deploy/chart -n factory \
-  -f deploy/chart/values-autobutler.example.yaml \
-  --set image.tag=<release> \
-  --set github.appId=<app id>
+  -f deploy/chart/values-autobutler.yaml \
+  --set image.tag=<release>
 ```
 
-`image.tag` sets both the server and worker image tags; `workers.image.tag` overrides the worker's. Leave
-`github.appId` out to run without a GitHub App. Then:
+`image.tag` sets both the server and worker image tags; `workers.image.tag` overrides the worker's. Our cluster's
+values set `github.appId` (not secret) and `service.type: ClusterIP`; on another cluster, leave `github.appId` empty
+to run without a GitHub App. On our cluster a release tag does this for you ([Deploying a
+release](#deploying-a-release)). Then:
 
 ```sh
 kubectl -n factory rollout status deployment/factory
@@ -124,7 +125,8 @@ the item is planned, then shows each step and its state. The web UI at `http://1
 
 ## Upgrade
 
-Run the same `helm upgrade --install` with the new `image.tag`. Each new server pod runs the migrations in its
+On our cluster a release tag upgrades it ([Deploying a release](#deploying-a-release)). Elsewhere, run the same
+`helm upgrade --install` with the new `image.tag`. Each new server pod runs the migrations in its
 `migrate` init container before the server starts. If they fail, the new pod never becomes ready, the old pod keeps
 serving, and the kubelet retries with backoff. Add `--wait` to make `helm upgrade` fail when that happens. To read
 the migration's output:
@@ -155,7 +157,7 @@ of its own instead of adding to the shared one:
    `USER 1000:1000`, every tool on `PATH` (no other environment variable reaches the gate or a session, and the
    gate's `HOME` is an empty scratch directory), and Claude Code left as installed.
 2. Build it for the worker nodes' architecture (arm64 here) and push it under a prefix in `launcher.allowedImages`
-   (`ghcr.io/autobutler-org/` in the example values), public or otherwise pullable without credentials: the Jobs
+   (`ghcr.io/autobutler-org/` in our cluster's values), public or otherwise pullable without credentials: the Jobs
    have no `imagePullSecrets`. Keep it small enough to pull within `launcher.pendingTimeout`.
 3. Name it in the repository's `.factory/config.toml` with a tag or digest:
    `image = "ghcr.io/autobutler-org/quark-worker:1.4.0"`.
@@ -183,14 +185,102 @@ in place.
 
 Push a tag `vX.Y.Z` on `main`. The `images` workflow builds both images for linux/amd64 and linux/arm64 and pushes
 `ghcr.io/autobutler-org/factory` and `ghcr.io/autobutler-org/factory-worker` tagged `X.Y.Z`, `vX.Y.Z` and
-`latest`, with the version stamped into the binary. Pull requests build both images without pushing. Then install or
-upgrade with `--set image.tag=X.Y.Z`. The chart is not published as a package yet; install it from this repository at
-the same tag. Locally, `make build/image` and `make build/image/worker` build the two images.
+`latest`, with the version stamped into the binary. Pull requests build both images without pushing. Once both are
+pushed, the same run deploys the tag to our cluster ([Deploying a release](#deploying-a-release)). The chart is not
+published as a package yet; install it from this repository at the same tag. Locally, `make build/image` and
+`make build/image/worker` build the two images.
+
+## Deploying a release
+
+The `deploy` workflow ([`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)) upgrades the `factory`
+release in the `factory` namespace of the `autobutler-factory` AKS cluster. `images.yml` calls it after both images
+for a `v*` tag are published; it never runs before they exist. It:
+
+1. Checks out the tag, so the chart and [`deploy/chart/values-autobutler.yaml`](../deploy/chart/values-autobutler.yaml)
+   are the tagged ones.
+2. Logs in to Azure with GitHub OIDC (`azure/login`) as the deploy identity `id-autobutler-factory-deploy`. No Azure
+   credential is stored in GitHub.
+3. Gets a kubeconfig with `az aks get-credentials` and converts it with `kubelogin convert-kubeconfig -l azurecli`
+   (local accounts are off; Kubernetes access is Entra with Azure RBAC).
+4. Runs `helm upgrade --install factory deploy/chart -n factory -f deploy/chart/values-autobutler.yaml --set
+   image.tag=<tag> --rollback-on-failure --wait --timeout 10m`. `--rollback-on-failure` is Helm 4's name for
+   `--atomic`: a release that is not ready within ten minutes is rolled back to the previous revision and the job
+   fails, with the previous release still serving.
+5. Writes the Helm history, the rollout status, the server and worker image, and the pods to the job summary.
+6. Checks `/readyz` through the API server's Service proxy
+   (`kubectl get --raw /api/v1/namespaces/factory/services/factory:http/proxy/readyz`), so no public address is
+   needed.
+
+One deploy runs at a time (concurrency group `deploy-production`), and a running deploy is never canceled. If several
+are queued, GitHub keeps only the newest.
+
+### Rolling back
+
+Run the workflow by hand with the earlier tag: Actions, `deploy`, Run workflow, `tag: v1.2.3`, or
+
+```sh
+gh workflow run deploy.yml --repo autobutler-org/factory -f tag=v1.2.3
+```
+
+It deploys that tag's chart, values and images the same way. Only tags that contain `deploy/chart/values-autobutler.yaml`
+can be deployed this way; for an older tag, deploy by hand. `helm rollback factory <revision> -n factory` also works
+from a machine with cluster access.
+
+Migrations run in the server pod's `migrate` init container, so an upgrade applies them, and a rollback does not undo
+them. Rolling back is safe only if the earlier version runs against the newer schema: keep every migration backward
+compatible for one release (add columns and tables; drop or rename in the release after).
+
+Running worker Jobs keep the image they started with until they finish; the launcher starts new Jobs on the new tag.
+The deploy does not wait for them. The server and worker promise no compatibility across versions yet
+([Giving a repository its own tools](#giving-a-repository-its-own-tools)), so a worker on the old image may fail its
+step against the new server, and that step then fails or is retried under the lease rules
+([architecture/workers.md](architecture/workers.md)). That is accepted for now; to avoid it, tag when
+`kubectl -n factory-workers get jobs` shows none running.
+
+### Deploying by hand
+
+If GitHub Actions is down, run the same steps from a checkout of the tag with your own access (see
+[`modules/factory/README.md`](https://github.com/autobutler-org/iac/blob/main/modules/factory/README.md) in iac for
+the roles you need):
+
+```sh
+git checkout v1.2.3
+az aks get-credentials --resource-group autobutler-factory --name autobutler-factory
+kubelogin convert-kubeconfig -l azurecli
+helm upgrade --install factory deploy/chart -n factory -f deploy/chart/values-autobutler.yaml \
+  --set image.tag=v1.2.3 --rollback-on-failure --wait --timeout 10m
+```
+
+### Setup
+
+The `production` GitHub environment holds the workflow's variables. None is secret, and the workflow reads no secret:
+
+| Variable | Value |
+| --- | --- |
+| `AZURE_CLIENT_ID` | the iac output `factory_deploy_identity_client_id` |
+| `AZURE_TENANT_ID` | the Entra tenant id |
+| `AZURE_SUBSCRIPTION_ID` | the subscription holding `autobutler-factory` |
+| `AKS_RESOURCE_GROUP` | `autobutler-factory` |
+| `AKS_CLUSTER_NAME` | `autobutler-factory` |
+
+The deploy identity trusts only the OIDC subject
+`repo:autobutler-org@217851255/factory@1463156387:environment:production`, so only a job in that environment can
+log in as it ([iac#127](https://github.com/autobutler-org/iac/issues/127)). Restrict the environment's deployment
+branches and tags to `main` and `v*`, and add required reviewers there to gate deploys; the workflow does not change.
+
+What the deploy identity may do, from iac `modules/factory/cluster.tf`, at the scope of the whole cluster:
+
+- Azure Kubernetes Service Cluster User Role: fetch the kubeconfig.
+- Azure Kubernetes Service RBAC Cluster Admin: every Kubernetes verb in every namespace.
+
+That is more than the upgrade needs. The chart writes in `factory` and `factory-workers` and one cluster-scoped
+StorageClass, and the checks read pods and proxy to the Service. Narrowing it to those namespaces is
+[iac#128](https://github.com/autobutler-org/iac/issues/128).
 
 ## In-cluster Postgres
 
 Azure will not create the managed flexible server for our subscription, so for now Postgres runs in the cluster
-(`postgres.enabled=true`, set in the example values). It is one Postgres 17 pod with its data on an Azure disk.
+(`postgres.enabled=true`, set in our cluster's values). It is one Postgres 17 pod with its data on an Azure disk.
 **There are no backups.**
 
 ### Secrets
@@ -241,7 +331,7 @@ The socket connection inside the pod needs no password. Nothing outside the serv
 
 ### What survives what
 
-The data is on the claim `data-factory-postgres-0`, backed by an Azure disk. With the example values the claim
+The data is on the claim `data-factory-postgres-0`, backed by an Azure disk. With our cluster's values the claim
 uses the chart's StorageClass `factory-postgres` (`reclaimPolicy: Retain`, StandardSSD_LRS); with the cluster
 default `managed-csi` the reclaim policy is Delete.
 

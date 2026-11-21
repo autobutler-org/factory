@@ -1,7 +1,8 @@
-# Example values for the autobutler AKS cluster (Kubernetes 1.37).
+# Values for the autobutler AKS cluster (Kubernetes 1.37). The deploy workflow installs the chart with these and
+# image.tag set to the release tag (docs/operations.md, Deploying a release):
 #
 #   helm upgrade --install factory deploy/chart -n factory \
-#     -f deploy/chart/values-autobutler.example.yaml --set image.tag=<release>
+#     -f deploy/chart/values-autobutler.yaml --set image.tag=<release>
 #
 # The server runs in `factory`, workers in `factory-workers` (Pod Security restricted, ResourceQuota `workers`).
 # Both namespaces exist already; the chart creates neither.
@@ -29,16 +30,17 @@ postgres:
     kubernetes.io/os: linux
     kubernetes.io/arch: amd64
 
-# The GitHub App that mints workers' repository tokens. Set appId (with --set github.appId=...) once the App
-# exists; the private key Secret is in `factory` with the key private-key.pem.
+# The GitHub App that mints workers' repository tokens. The id is not secret; the private key Secret is in
+# `factory` with the key private-key.pem.
 github:
-  appId: ""
+  appId: "5304111"
   privateKeySecretName: factory-github-app
 
-# factory.cloud.autobutler.org points at this load balancer's public IP. There is no ingress, and the
-# Service is plain HTTP: no TLS until that is resolved.
+# ClusterIP: the Service is plain HTTP with no sign-in, so it stays off the internet until #56. Reach it with
+# kubectl port-forward. factory.cloud.autobutler.org points at the public IP these annotations name, which a
+# LoadBalancer Service attaches once #56 lands.
 service:
-  type: LoadBalancer
+  type: ClusterIP
   annotations:
     service.beta.kubernetes.io/azure-load-balancer-resource-group: autobutler-factory
     service.beta.kubernetes.io/azure-pip-name: autobutler-factory-ingress-pip
