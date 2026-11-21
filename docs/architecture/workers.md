@@ -199,7 +199,7 @@ stay readable; they do not count against the cap.
 ### What a worker sandbox receives
 
 The worker (`factory worker`, #11) runs as the container's command `factory worker`: the Job sets the arguments
-`worker` and relies on the image's entrypoint, `factory`. The image is `--launcher-image` or the repository's
+`worker` and relies on the image's entrypoint, `tini -- factory`. The image is `--launcher-image` or the repository's
 allowed `image`; a derived image keeps the contract in the header of `Dockerfile.worker`. Its environment:
 
 | Variable | Value |
