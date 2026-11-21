@@ -40,6 +40,11 @@ to have yours used instead.
 `GET /api/v1/workers` lists the workers by name, each with `holds`: what it holds now, an item claimed whole
 (`{"work_item_id", "title"}`) or a running step (`{"work_item_id", "title", "step_id", "step_key"}`).
 
+`GET /api/v1/status` is the factory at a glance:
+`{"counts": {<every state>: n}, "workers": {"active": n, ...}, "oldest_ready": item | null, "recent_failures": [items]}`.
+`oldest_ready` is the item that has waited in `ready` longest; `recent_failures` are the five latest `failed`
+items, newest first. `factory status` prints it.
+
 Cluster workers claim steps (`POST /api/v1/workers/{id}/claim`) and report on them under
 `/api/v1/steps/{id}/` (`stage`, `result`, `release`); adapters complete wait steps with
 `POST /api/v1/steps/{id}/complete`. Developers claim whole items under `/api/v1/work/{id}/` (`claim`, `stage`,

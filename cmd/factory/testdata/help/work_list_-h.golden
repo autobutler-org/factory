@@ -1,0 +1,32 @@
+$ factory work list -h
+exit 0
+--- stdout
+usage: factory work list [flags]
+
+List work items, highest priority first, then oldest first. When more
+items match than --limit, the next page's cursor is printed on stderr.
+
+Flags:
+  --claimed-by ID
+      only items claimed by this worker ID
+  --cursor CURSOR
+      the cursor of the page to list, printed by the page before it
+  --limit INT
+      at most this many items; the server's default is 50 and its most 200
+  --output FORMAT
+      output format: table or json (default table)
+  --repo REPOSITORY
+      only items that change this repository (owner/name)
+  --server URL
+      the factory server's URL, such as http://127.0.0.1:8080 (default
+      $FACTORY_SERVER)
+  --source SOURCE
+      only items from this source, such as github
+  --state STATE
+      only items in this state: design, ready, in_progress, in_review,
+      blocked, failed, completed, wont_fix
+
+Environment:
+  FACTORY_SERVER       the server's URL when --server is not given
+  FACTORY_API_TOKEN    the API token the server was started with
+--- stderr

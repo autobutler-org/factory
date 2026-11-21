@@ -1,0 +1,5 @@
+$ factory status
+exit 1
+--- stdout
+--- stderr
+factory status: the server needs an API token: set FACTORY_API_TOKEN to the token it was started with.

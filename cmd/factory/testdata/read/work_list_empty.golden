@@ -1,0 +1,5 @@
+$ factory work list --state design
+exit 0
+--- stdout
+No work items match.
+--- stderr

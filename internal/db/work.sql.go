@@ -29,6 +29,35 @@ func (q *Queries) AddDependency(ctx context.Context, arg AddDependencyParams) (i
 	return result.RowsAffected(), nil
 }
 
+const countItemsByState = `-- name: CountItemsByState :many
+SELECT state, count(*) AS items FROM work_items GROUP BY state
+`
+
+type CountItemsByStateRow struct {
+	State string `json:"state"`
+	Items int64  `json:"items"`
+}
+
+func (q *Queries) CountItemsByState(ctx context.Context) ([]CountItemsByStateRow, error) {
+	rows, err := q.db.Query(ctx, countItemsByState)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountItemsByStateRow{}
+	for rows.Next() {
+		var i CountItemsByStateRow
+		if err := rows.Scan(&i.State, &i.Items); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countOutputs = `-- name: CountOutputs :one
 SELECT count(*) FILTER (WHERE status = 'open')   AS open,
        count(*) FILTER (WHERE status = 'merged') AS merged
@@ -524,6 +553,55 @@ func (q *Queries) ListOutputs(ctx context.Context, workItemID string) ([]WorkOut
 	return items, nil
 }
 
+const oldestReadyItem = `-- name: OldestReadyItem :many
+SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key, claimed_by, claimed_at, lease_expires_at, stage_reported_at, available_at, requires FROM work_items WHERE state = 'ready' ORDER BY state_changed_at, id LIMIT 1
+`
+
+// The item that has waited in ready longest; none when nothing is ready.
+func (q *Queries) OldestReadyItem(ctx context.Context) ([]WorkItem, error) {
+	rows, err := q.db.Query(ctx, oldestReadyItem)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkItem{}
+	for rows.Next() {
+		var i WorkItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.Source,
+			&i.ExternalID,
+			&i.ExternalUrl,
+			&i.Title,
+			&i.Body,
+			&i.Repos,
+			&i.State,
+			&i.Stage,
+			&i.StateReason,
+			&i.Priority,
+			&i.Attempts,
+			&i.OutputsDone,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StateChangedAt,
+			&i.IdempotencyKey,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
+			&i.LeaseExpiresAt,
+			&i.StageReportedAt,
+			&i.AvailableAt,
+			&i.Requires,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const patchItem = `-- name: PatchItem :one
 UPDATE work_items
 SET title = coalesce($1, title),
@@ -575,6 +653,54 @@ func (q *Queries) PatchItem(ctx context.Context, arg PatchItemParams) (WorkItem,
 		&i.Requires,
 	)
 	return i, err
+}
+
+const recentFailedItems = `-- name: RecentFailedItems :many
+SELECT id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key, claimed_by, claimed_at, lease_expires_at, stage_reported_at, available_at, requires FROM work_items WHERE state = 'failed' ORDER BY state_changed_at DESC, id LIMIT $1
+`
+
+func (q *Queries) RecentFailedItems(ctx context.Context, maxRows int32) ([]WorkItem, error) {
+	rows, err := q.db.Query(ctx, recentFailedItems, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkItem{}
+	for rows.Next() {
+		var i WorkItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.Source,
+			&i.ExternalID,
+			&i.ExternalUrl,
+			&i.Title,
+			&i.Body,
+			&i.Repos,
+			&i.State,
+			&i.Stage,
+			&i.StateReason,
+			&i.Priority,
+			&i.Attempts,
+			&i.OutputsDone,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StateChangedAt,
+			&i.IdempotencyKey,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
+			&i.LeaseExpiresAt,
+			&i.StageReportedAt,
+			&i.AvailableAt,
+			&i.Requires,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const removeDependency = `-- name: RemoveDependency :execrows

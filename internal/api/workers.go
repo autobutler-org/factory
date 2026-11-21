@@ -34,6 +34,15 @@ func (h handlers) listWorkers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"workers": workers})
 }
 
+func (h handlers) status(w http.ResponseWriter, r *http.Request) {
+	st, err := h.cfg.Work.Status(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
 func (h handlers) heartbeat(w http.ResponseWriter, r *http.Request) {
 	held, err := h.cfg.Work.Heartbeat(r.Context(), r.PathValue("id"))
 	if err != nil {

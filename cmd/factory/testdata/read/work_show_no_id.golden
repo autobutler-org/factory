@@ -1,0 +1,6 @@
+$ factory work show
+exit 2
+--- stdout
+--- stderr
+factory work show: missing <id>
+Run 'factory work show --help' for usage.

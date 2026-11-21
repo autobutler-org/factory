@@ -104,6 +104,7 @@ func New(cfg Config) http.Handler {
 	v1.HandleFunc("POST /api/v1/work/{id}/codehost-token", h.codehostToken)
 	v1.HandleFunc("POST /api/v1/workers", h.registerWorker)
 	v1.HandleFunc("GET /api/v1/workers", h.listWorkers)
+	v1.HandleFunc("GET /api/v1/status", h.status)
 	v1.HandleFunc("POST /api/v1/workers/{id}/heartbeat", h.heartbeat)
 	v1.HandleFunc("POST /api/v1/workers/{id}/claim", h.claimStep)
 	v1.HandleFunc("GET /api/v1/work/{id}/graph", h.graph)

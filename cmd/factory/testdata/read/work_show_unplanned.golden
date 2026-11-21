@@ -1,0 +1,16 @@
+$ factory work show 0b8c1f9e-0000-4000-8000-000000000002
+exit 0
+--- stdout
+ID:        0b8c1f9e-0000-4000-8000-000000000002
+Title:     rotate the staging certificates
+State:     ready
+Priority:  0
+Repos:     autobutler-org/infra
+Attempts:  0
+Created:   2026-11-18 11:00:00
+Updated:   2026-11-18 11:00:00
+
+Not planned yet: no step graph.
+
+Timeline:
+--- stderr
