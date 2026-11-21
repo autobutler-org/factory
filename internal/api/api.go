@@ -1,5 +1,6 @@
 // Package api is factory's HTTP JSON API: /healthz, /readyz and the versioned
-// routes under /api/v1. Every other path goes to Config.UI, the web UI, when
+// routes under /api/v1, including read-only views of a work item's worker
+// sandboxes and their logs through Config.Sandboxes. Every other path goes to Config.UI, the web UI, when
 // one is set. Handlers only decode the request, call the work service, and
 // encode the result; they hold no SQL and no state rules.
 //
@@ -28,6 +29,7 @@ import (
 
 	"github.com/autobutler-org/factory/internal/codehost"
 	"github.com/autobutler-org/factory/internal/lease"
+	"github.com/autobutler-org/factory/internal/sandbox"
 	"github.com/autobutler-org/factory/internal/work"
 )
 
@@ -54,6 +56,10 @@ type Config struct {
 	// without the token: the web UI asks for the token itself. Nil answers
 	// those paths with a JSON 404.
 	UI http.Handler
+	// Sandboxes is the runtime the launcher starts worker sandboxes with,
+	// read for the sandbox routes. Nil means the launcher is off, and those
+	// routes get 503.
+	Sandboxes sandbox.Runtime
 }
 
 type ctxKey struct{}
@@ -97,6 +103,8 @@ func New(cfg Config) http.Handler {
 	v1.HandleFunc("POST /api/v1/workers/{id}/heartbeat", h.heartbeat)
 	v1.HandleFunc("POST /api/v1/workers/{id}/claim", h.claimStep)
 	v1.HandleFunc("GET /api/v1/work/{id}/graph", h.graph)
+	v1.HandleFunc("GET /api/v1/work/{id}/sandboxes", h.listSandboxes)
+	v1.HandleFunc("GET /api/v1/work/{id}/sandboxes/{name}/logs", h.sandboxLogs)
 	v1.HandleFunc("POST /api/v1/work/{id}/replan", h.replan)
 	v1.HandleFunc("POST /api/v1/steps/{id}/stage", h.stepStage)
 	v1.HandleFunc("POST /api/v1/steps/{id}/result", h.stepResult)

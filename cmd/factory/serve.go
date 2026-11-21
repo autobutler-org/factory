@@ -155,8 +155,13 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		logger.Warn("no GitHub App is configured: items are planned with default repository settings, " +
 			"not their .factory/config.toml. Set --github-app-id and --github-app-key-file to read it")
 	}
+	apiConfig := api.Config{Work: svc, Ready: ready, Token: token, Logger: logger, MintToken: mintToken, UI: server.UI(server.Public())}
+	if jobs != nil {
+		// Assigned only when set: a nil *Jobs in the interface would not be nil.
+		apiConfig.Sandboxes = jobs
+	}
 	srv := &http.Server{
-		Handler:           api.New(api.Config{Work: svc, Ready: ready, Token: token, Logger: logger, MintToken: mintToken, UI: server.UI(server.Public())}),
+		Handler:           api.New(apiConfig),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,

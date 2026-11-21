@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFakeLifecycle(t *testing.T) {
@@ -91,5 +92,34 @@ func TestFakeExec(t *testing.T) {
 
 	if err := f.Exec(ctx, "w1", ExecRequest{}); err == nil {
 		t.Error("Exec with no command succeeded, want an error")
+	}
+}
+
+func TestFakeLogs(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	f := NewFake()
+	if _, err := f.Logs(ctx, "w1", LogQuery{Tail: 10}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Logs of a missing sandbox: err = %v, want ErrNotFound", err)
+	}
+	if _, err := f.Ensure(ctx, "w1", "item/o/r", ""); err != nil {
+		t.Fatal(err)
+	}
+	var ns *NotStartedError
+	if _, err := f.Logs(ctx, "w1", LogQuery{Tail: 10}); !errors.As(err, &ns) {
+		t.Errorf("Logs of a pending sandbox: err = %v, want a NotStartedError", err)
+	}
+	f.SetPhase("w1", PhaseRunning)
+	for i, text := range []string{"a", "b", "c"} {
+		f.AppendLog("w1", t0.Add(time.Duration(i)*time.Second), text)
+	}
+	tail, err := f.Logs(ctx, "w1", LogQuery{Tail: 2})
+	if err != nil || texts(tail.Lines) != "b,c" {
+		t.Fatalf("tail 2 = %q, %v; want b,c", texts(tail.Lines), err)
+	}
+	f.AppendLog("w1", t0.Add(3*time.Second), "d")
+	next, err := f.Logs(ctx, "w1", LogQuery{After: &tail.Next})
+	if err != nil || texts(next.Lines) != "d" {
+		t.Errorf("after the tail = %q, %v; want d", texts(next.Lines), err)
 	}
 }

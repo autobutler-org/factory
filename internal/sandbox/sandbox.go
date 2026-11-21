@@ -6,12 +6,13 @@
 // It defines the Runtime interface, an in-memory Fake for tests, Jobs (the
 // Kubernetes Job implementation chosen in docs/decisions/0001-agent-runtime.md),
 // Reconcile, which decides which chains of steps get a sandbox and which
-// sandboxes may stop, and AllowImage, which says whether a sandbox may run
+// sandboxes may stop, readers of a sandbox's log with a cursor that
+// follows it across reads (Runtime.Logs), and AllowImage, which says whether a sandbox may run
 // the image a repository asks for. One sandbox serves one chain: the steps of one work
 // item and repository that share a working tree (their sandbox key).
 //
 // It does not claim work, pick which work item a sandbox runs, authorize
-// exec sessions, or record events: the worker claims, and the factory server
+// exec sessions or log reads, keep a log after its sandbox is gone, or record events: the worker claims, and the factory server
 // authorizes and records. It holds no state of its own; the cluster is the
 // record of which sandboxes exist.
 package sandbox
@@ -94,6 +95,11 @@ type Runtime interface {
 	// Exec runs a command in the named sandbox's worker container, streaming
 	// its input and output until the command exits or ctx is canceled.
 	Exec(ctx context.Context, name string, req ExecRequest) error
+	// Logs reads the named sandbox's worker container log, up to the caps
+	// (MaxLogLines, MaxLogBytes, MaxLogLineBytes). It returns ErrNotFound
+	// when the sandbox or its pod is gone, and a *NotStartedError when the
+	// container has not started.
+	Logs(ctx context.Context, name string, q LogQuery) (Logs, error)
 }
 
 // Plan is what Reconcile decided.

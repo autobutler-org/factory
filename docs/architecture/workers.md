@@ -196,6 +196,27 @@ a time (a Postgres advisory lock), it:
 Ended Jobs are left for Kubernetes to delete an hour after they finish (`ttlSecondsAfterFinished`), so their logs
 stay readable; they do not count against the cap.
 
+### Reading a sandbox's log
+
+The server reads a worker's log for the UI with `sandbox.Runtime.Logs`, served as
+`GET /api/v1/work/{id}/sandboxes/{name}/logs` ([api.md](../api.md#sandbox-logs)). The Jobs runtime finds the Job's
+newest pod and, once its `worker` container has started, reads the pod log API (RBAC `pods/log` get in the worker
+namespace) with `timestamps=true`. Before the container starts it reports the container's waiting reason
+(`sandbox.NotStartedError`), not an empty log; once the Job is gone, `ErrNotFound`. Nothing is kept after that.
+
+A read is either the last `N` lines (`tailLines`) or the lines after a cursor. The cursor is the timestamp of the
+last line returned and how many lines with exactly that timestamp were returned. Kubernetes' `sinceTime` has
+one-second granularity, so a read after a cursor asks for the log from the cursor's whole second and drops the lines
+before the cursor's timestamp and the counted ones at it: no line repeats or goes missing between polls, even when
+several share one timestamp. A line without a timestamp takes the one before it. This assumes timestamps never go
+backwards; the container runtime stamps stdout and stderr separately, so in rare cases a line can carry an earlier
+time than the one before it and be skipped by the next read. The server holds no state for a cursor.
+
+One read returns at most 5000 lines and 1 MiB of line text (`sandbox.MaxLogLines`, `MaxLogBytes`), cuts lines at
+16 KiB (`MaxLogLineBytes`, marked truncated), stops reading the pod log there, and gives up after 20 seconds.
+Following is polling rather than a stream: the UI polls everything else, and a long-lived response would run into
+the server's 60 second write timeout.
+
 ### What a worker sandbox receives
 
 The worker (`factory worker`, #11) runs as the container's command `factory worker`: the Job sets the arguments

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -88,8 +89,8 @@ type JobsConfig struct {
 
 // Jobs is a Runtime that runs each sandbox as a Kubernetes Job with one pod,
 // and execs into it through the Kubernetes exec API. It needs RBAC in its
-// namespace to create, get, list, and delete Jobs, list Pods, and create
-// pods/exec.
+// namespace to create, get, list, and delete Jobs, list Pods, create
+// pods/exec, and get pods/log.
 type Jobs struct {
 	client      kubernetes.Interface
 	cfg         JobsConfig
@@ -379,4 +380,81 @@ func (j *Jobs) runningPod(ctx context.Context, name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("sandbox %q pod is %s: %w", name, pods.Items[0].Status.Phase, ErrNotRunning)
+}
+
+// Logs implements Runtime. It reads the worker container's log through the
+// pod log API with timestamps, which the cursor is built from: a read after
+// a cursor starts at the cursor's whole second (sinceTime has one-second
+// granularity) and drops what the cursor has already covered.
+func (j *Jobs) Logs(ctx context.Context, name string, q LogQuery) (Logs, error) {
+	pod, err := j.startedPod(ctx, name)
+	if err != nil {
+		return Logs{}, err
+	}
+	opts := &corev1.PodLogOptions{Container: workerContainer, Timestamps: true}
+	var after Cursor
+	switch {
+	case q.After == nil:
+		opts.TailLines = new(int64(q.Tail))
+	case !q.After.Time.IsZero():
+		after = *q.After
+		opts.SinceTime = &metav1.Time{Time: after.Time}
+	}
+	// The pod log API is read through podREST, not the clientset, so tests
+	// can serve it.
+	stream, err := j.podREST.Get().
+		Namespace(j.cfg.Namespace).
+		Resource("pods").
+		Name(pod).
+		SubResource("log").
+		VersionedParams(opts, scheme.ParameterCodec).
+		Stream(ctx)
+	switch {
+	case apierrors.IsNotFound(err):
+		return Logs{}, fmt.Errorf("sandbox %q pod %s is gone: %w", name, pod, ErrNotFound)
+	case apierrors.IsBadRequest(err) && strings.Contains(err.Error(), "waiting to start"):
+		// The container stopped being ready between the pod read and this one.
+		_, reason, _ := strings.Cut(err.Error(), "waiting to start: ")
+		return Logs{}, &NotStartedError{Reason: reason, Message: err.Error()}
+	case err != nil:
+		return Logs{}, fmt.Errorf("sandbox %q: read pod log: %w", name, err)
+	}
+	defer stream.Close()
+	logs, err := readLog(stream, after)
+	if err != nil {
+		return logs, fmt.Errorf("sandbox %q: %w", name, err)
+	}
+	return logs, nil
+}
+
+// startedPod returns the name of the named sandbox's newest pod once its
+// worker container has started.
+func (j *Jobs) startedPod(ctx context.Context, name string) (string, error) {
+	pods, err := j.client.CoreV1().Pods(j.cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labels.SelectorFromSet(map[string]string{batchv1.JobNameLabel: name}).String(),
+	})
+	if err != nil {
+		return "", fmt.Errorf("sandbox %q: list pods: %w", name, err)
+	}
+	if len(pods.Items) == 0 {
+		if _, err := j.Status(ctx, name); err != nil {
+			return "", err
+		}
+		return "", &NotStartedError{Reason: "NoPod", Message: "the Job has not created its pod yet"}
+	}
+	pod := slices.MaxFunc(pods.Items, func(a, b corev1.Pod) int {
+		return a.CreationTimestamp.Compare(b.CreationTimestamp.Time)
+	})
+	for _, c := range pod.Status.ContainerStatuses {
+		if c.Name != workerContainer {
+			continue
+		}
+		if c.State.Running != nil || c.State.Terminated != nil {
+			return pod.Name, nil
+		}
+		if c.State.Waiting != nil {
+			return "", &NotStartedError{Reason: c.State.Waiting.Reason, Message: c.State.Waiting.Message}
+		}
+	}
+	return "", &NotStartedError{Reason: string(pod.Status.Phase), Message: pod.Status.Message}
 }
