@@ -1,7 +1,9 @@
 # HTTP API
 
 `factory serve` serves JSON over HTTP. Routes under `/api/v1` need `Authorization: Bearer <token>` when
-`FACTORY_API_TOKEN` is set (see [config.md](config.md)). Every response carries an `X-Request-ID` header; send one
+`FACTORY_API_TOKEN` is set (see [config.md](config.md)). Every other path outside `/healthz` and `/readyz` serves the
+web UI without the token: a file of the build when the path names one, otherwise `index.html`, so the UI's own routes
+(`/work/{id}`, `/workers`) load. The UI asks for the token and sends it on its API calls. Every response carries an `X-Request-ID` header; send one
 to have yours used instead.
 
 ## Health
@@ -32,6 +34,9 @@ to have yours used instead.
 [architecture/graph.md](architecture/graph.md).
 
 ## Workers
+
+`GET /api/v1/workers` lists the workers by name, each with `holds`: what it holds now, an item claimed whole
+(`{"work_item_id", "title"}`) or a running step (`{"work_item_id", "title", "step_id", "step_key"}`).
 
 Cluster workers claim steps (`POST /api/v1/workers/{id}/claim`) and report on them under
 `/api/v1/steps/{id}/` (`stage`, `result`, `release`); adapters complete wait steps with

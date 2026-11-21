@@ -9,7 +9,8 @@ example values for our cluster are in
 In the release namespace (`factory`):
 
 - A Deployment running `factory serve`, one replica, with a ServiceAccount of its own.
-- A Service on port 80 (default type `LoadBalancer`) in front of the server's port 8080. Plain HTTP.
+- A Service on port 80 (default type `LoadBalancer`) in front of the server's port 8080. Plain HTTP. The same
+  address serves the web UI at `/`; it asks for `FACTORY_API_TOKEN` once per browser tab.
 - An init container `migrate` in each server pod that runs `factory migrate up` before the server starts.
 - With `postgres.enabled=true`, an in-cluster Postgres: a StatefulSet, a headless Service `factory-postgres`, a
   NetworkPolicy, and, with `postgres.persistence.retainStorageClass.create=true`, a cluster-scoped StorageClass

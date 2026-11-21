@@ -83,3 +83,19 @@ FOR UPDATE SKIP LOCKED;
 UPDATE workers SET state = 'gone'
 WHERE state <> 'gone' AND last_seen_at <= now() - make_interval(secs => @ttl_seconds::float8)
 RETURNING id, name;
+
+-- name: ListHeldItems :many
+-- Items held under a whole-item claim, the local developer protocol.
+SELECT claimed_by::uuid AS worker_id, id AS work_item_id, title
+FROM work_items
+WHERE state = 'in_progress' AND claimed_by IS NOT NULL
+ORDER BY claimed_at, id;
+
+-- name: ListHeldSteps :many
+-- Steps held by the cluster workers running them.
+SELECT s.claimed_by::uuid AS worker_id, w.id AS work_item_id, w.title, s.id AS step_id, s.key AS step_key
+FROM work_steps s
+JOIN work_graphs g ON g.id = s.graph_id
+JOIN work_items w ON w.id = g.work_item_id
+WHERE s.state = 'running' AND s.claimed_by IS NOT NULL
+ORDER BY s.started_at, s.id;

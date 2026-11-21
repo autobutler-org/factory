@@ -19,7 +19,32 @@ permissions:
   contents: read
 
 jobs:
+  # Works out which areas a pull request or merge queue entry touches, from
+  # .github/path-filters.yml. Jobs skip with `if:` rather than `on: paths:`, so
+  # a skipped required check counts as passing.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: filter
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        # A failed filter leaves the outputs empty, and every job runs.
+        continue-on-error: true
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: .github/path-filters.yml
+
+  # The Go half of make check; the web half is the web job in ci.yml.
   check:
+    needs: changes
+    if: needs.changes.outputs.go != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -27,9 +52,11 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - run: make check
+      - run: make check/go
 
   govulncheck:
+    needs: changes
+    if: needs.changes.outputs.go != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

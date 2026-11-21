@@ -1,0 +1,25 @@
+# What each job in ci.yml and check.yml reads, for dorny/paths-filter. On a pull
+# request and in the merge queue a job runs only when its set matched; pushes to
+# main run everything. When a job starts reading something new, add it here, or
+# a pull request that breaks the job merges green.
+ci: &ci
+  - Makefile
+  - .github/path-filters.yml
+  - .github/workflows/ci.yml
+  - .github/workflows/check.yml
+# The Go jobs: build, tests, make check/go and govulncheck.
+go:
+  - *ci
+  - "**/*.go"
+  - go.mod
+  - go.sum
+  - .golangci.yml
+  - sqlc.yaml
+  - sql/**
+  # Migrations and the embedded web build are read by go:embed.
+  - internal/**
+  - cmd/**
+# The web jobs: make check/web and test/web. make build embeds web/ too.
+web:
+  - *ci
+  - web/**

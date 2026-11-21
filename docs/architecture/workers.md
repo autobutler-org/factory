@@ -315,7 +315,13 @@ are JSON. Unknown request fields are refused with `400 malformed_request`. Every
 
 ### List: `GET /api/v1/workers`
 
-`200 {"workers": [worker, ...]}`, by name.
+`200 {"workers": [worker, ...]}`, by name. Each worker also carries `holds`, what it holds now, for the UI:
+
+```json
+"holds": [{"work_item_id": "b2e9...", "title": "...", "step_id": "41d0...", "step_key": "autobutler-org/quark/implement"}]
+```
+
+A step claim has `step_id` and `step_key`; a whole-item claim (#12) has neither. A worker that holds nothing has `[]`.
 
 ### Heartbeat: `POST /api/v1/workers/{id}/heartbeat`
 

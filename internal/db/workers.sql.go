@@ -177,6 +177,84 @@ func (q *Queries) LeaseLive(ctx context.Context, id string) (bool, error) {
 	return column_1, err
 }
 
+const listHeldItems = `-- name: ListHeldItems :many
+SELECT claimed_by::uuid AS worker_id, id AS work_item_id, title
+FROM work_items
+WHERE state = 'in_progress' AND claimed_by IS NOT NULL
+ORDER BY claimed_at, id
+`
+
+type ListHeldItemsRow struct {
+	WorkerID   string `json:"worker_id"`
+	WorkItemID string `json:"work_item_id"`
+	Title      string `json:"title"`
+}
+
+// Items held under a whole-item claim, the local developer protocol.
+func (q *Queries) ListHeldItems(ctx context.Context) ([]ListHeldItemsRow, error) {
+	rows, err := q.db.Query(ctx, listHeldItems)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListHeldItemsRow{}
+	for rows.Next() {
+		var i ListHeldItemsRow
+		if err := rows.Scan(&i.WorkerID, &i.WorkItemID, &i.Title); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHeldSteps = `-- name: ListHeldSteps :many
+SELECT s.claimed_by::uuid AS worker_id, w.id AS work_item_id, w.title, s.id AS step_id, s.key AS step_key
+FROM work_steps s
+JOIN work_graphs g ON g.id = s.graph_id
+JOIN work_items w ON w.id = g.work_item_id
+WHERE s.state = 'running' AND s.claimed_by IS NOT NULL
+ORDER BY s.started_at, s.id
+`
+
+type ListHeldStepsRow struct {
+	WorkerID   string `json:"worker_id"`
+	WorkItemID string `json:"work_item_id"`
+	Title      string `json:"title"`
+	StepID     string `json:"step_id"`
+	StepKey    string `json:"step_key"`
+}
+
+// Steps held by the cluster workers running them.
+func (q *Queries) ListHeldSteps(ctx context.Context) ([]ListHeldStepsRow, error) {
+	rows, err := q.db.Query(ctx, listHeldSteps)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListHeldStepsRow{}
+	for rows.Next() {
+		var i ListHeldStepsRow
+		if err := rows.Scan(
+			&i.WorkerID,
+			&i.WorkItemID,
+			&i.Title,
+			&i.StepID,
+			&i.StepKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkers = `-- name: ListWorkers :many
 SELECT id, name, kind, capabilities, version, registered_at, last_seen_at, state FROM workers ORDER BY name
 `

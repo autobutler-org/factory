@@ -26,19 +26,19 @@ internal/repoconfig/ parses a repository's .factory/config.toml
 internal/secretscan/ finds credential-shaped literals in the lines a branch adds
 cmd/fakeagent/      a scripted stand-in for an agent CLI, for tests
 internal/launcher/  the server's launcher: plans ready items, starts one sandbox per runnable chain, runs merge (#17)
+internal/server/    serves the embedded web UI from public/ (make build/web output; only stub.txt is committed)
 sql/queries/        the SQL sqlc compiles into internal/db
 compose.yaml        the development Postgres, on loopback
 .factory/config.toml how the factory works on this repository: the gate is `make check`, a person approves and merges
 Dockerfile          the server image (distroless, non-root); Dockerfile.worker is the agent dev container
 deploy/chart/       the Helm chart; values-autobutler.example.yaml matches our cluster (docs/operations.md)
-web/                the web UI, embedded in the binary (#14)
+web/                the web UI (React, Vite, TypeScript; Vitest, ESLint, Prettier), built into internal/server/public (#14)
 docs/               api.md, config.md, operations.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols, worker HTTP contract and the launcher; worker.md: what `factory worker` does per step kind; codehost.md: the code host and its tokens)
 build/              build output (./build/factory); not source
-.github/workflows/  ci.yml (build, race tests, test-db and e2e on Postgres), check.yml (make check, govulncheck, attribution,
-                    chart), images.yml (builds both images; pushes them on v* tags), pr-title.yml, auto-assign-author.yml
+.github/workflows/  ci.yml (build, race tests, test-db and e2e on Postgres, web), check.yml (make check/go,
+                    govulncheck, attribution, chart), images.yml (builds both images; pushes them on v* tags), pr-title.yml, auto-assign-author.yml;
+                    path-filters.yml says which paths each job reads, so Go-only changes skip the web job and the reverse
 ```
-
-`web/` does not exist yet. The issue that first needs each one creates it.
 
 ## Use Makefile targets (always)
 
@@ -48,13 +48,18 @@ comment so `make help` lists it.
 | Target           | What it does                                                                  |
 | ---------------- | ----------------------------------------------------------------------------- |
 | `make setup`     | downloads modules and builds the dev tools pinned in `go.mod`                 |
-| `make build`     | builds `./build/factory` with version, commit, and date stamped in            |
+| `make build`     | `build/web`, then `build/go`: one `./build/factory` serving the UI and the API, with version, commit, and date stamped in |
+| `make build/web` | type-checks and builds `web/` into `internal/server/public`, which the binary embeds |
+| `make build/go`  | the Go binary alone; without a web build it serves a page that says to run `make build/web` |
+| `make serve/web` | the Vite dev server, proxying `/api` to a `factory serve` you started (`FACTORY_URL`, default `http://127.0.0.1:8080`) |
+| `make test/web`  | the web UI's component tests (Vitest, Testing Library)                        |
 | `make test`      | `go test ./...`                                                               |
 | `make test/race` | the tests under the race detector, as CI runs them                            |
 | `make test/e2e`  | the worker's end-to-end tests (build tag `e2e`) against Postgres              |
-| `make check`     | `check/format`, `check/tidy`, `check/lint`, `check/sqlc`, `check/migrations`, then `test`; changes no files |
+| `make check`     | `check/go` (`check/format`, `check/tidy`, `check/lint`, `check/sqlc`, `check/migrations`, `test`), `check/web` (ESLint, `tsc`, Prettier), then `test/web`; changes no files |
 | `make format`    | `golangci-lint fmt` (gci, gofumpt, goimports); rewrites files                 |
 | `make fix`       | applies lint autofixes, then formats                                          |
+| `make fix/web`   | ESLint autofixes and Prettier on `web/`; rewrites files                       |
 | `make tidy`      | `go mod tidy`                                                                 |
 | `make check/chart` | `helm lint` and `helm template` of `deploy/chart` with default and example values |
 | `make build/image`, `make build/image/worker` | the server and worker images, with the version stamped in (needs Docker) |
@@ -62,6 +67,9 @@ comment so `make help` lists it.
 - The Go version is pinned once, on the `go` line of `go.mod`. The Makefile reads it into `GOTOOLCHAIN`.
 - Dev tools (golangci-lint, gofumpt, gci, goimports, govulncheck, air) are `tool` directives in `go.mod` and
   run as `go tool <name>`. Do not install them globally or pin them anywhere else.
+- Node is pinned once, in `web/.nvmrc`, and matches `NODE_VERSION` in `Dockerfile.worker` and the `node` image in
+  `Dockerfile`. The Makefile finds nvm's copy of that version even when nvm is not loaded. npm dependencies are in
+  `web/package-lock.json`; the web targets install them with `npm ci`.
 - sqlc is a `tool` directive too (`go tool sqlc`). It needs cgo, which the default macOS and Linux toolchains have.
 - `.golangci.yml` enables only linters that have an autofix. Run `make format`, `make tidy`, and `make check`
   before pushing, and commit whatever the first two changed.

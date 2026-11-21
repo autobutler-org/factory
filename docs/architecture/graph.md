@@ -189,6 +189,7 @@ their next heartbeat. Steps of the new graph run from the start, which is safe b
 ## Not yet
 
 - The `decompose` kind, an agent step that proposes how to split a large item into a replan.
-- The UI's graph view (#14) and one telemetry span per step (#13).
+- One telemetry span per step (#13). The UI's work item page lists the graph's steps in plan order; a drawn graph is
+  still to come (#14).
 - A wait step only accepts its event while it is `ready`. An adapter that sees checks finish before the chain reaches
   `await_checks` must check the current status when the step becomes ready (#7).

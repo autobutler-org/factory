@@ -2,6 +2,9 @@ module github.com/autobutler-org/factory
 
 go 1.27.4
 
+// web/ holds no Go; its node_modules can (npm packages that ship Go ports).
+ignore ./web
+
 tool (
 	github.com/air-verse/air
 	github.com/daixiang0/gci
