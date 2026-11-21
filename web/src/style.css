@@ -177,6 +177,15 @@ input {
   border-radius: 6px;
   padding: 0 0.75rem 0.5rem;
 }
+/* A column at the 200-item limit scrolls on its own, so the columns after it stay in view. The
+   next card showing past the edge is the cue that there is more. */
+.column ul {
+  max-height: 40rem;
+  overflow-y: auto;
+}
+.column h2::first-letter {
+  text-transform: uppercase;
+}
 .column ul,
 .cards {
   list-style: none;

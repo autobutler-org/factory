@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 import { STATES, type WorkList } from "./api";
 import { label, Status } from "./format";
 import { Link, useTitle } from "./nav";
@@ -18,6 +19,12 @@ export function Board() {
     Promise.all(STATES.map((s) => get<WorkList>(`/work?state=${s}&${query}`, signal)))
   );
   const { data } = poll;
+  const repoField = useRef<HTMLInputElement>(null);
+  // Clear filters removes itself, so focus moves to the first field instead of the page body.
+  const clear = () => {
+    flushSync(() => setFilter({ repo: "", source: "" }));
+    repoField.current?.focus();
+  };
 
   const apply = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -31,15 +38,31 @@ export function Board() {
   return (
     <>
       <h1 tabIndex={-1}>Board</h1>
-      <form className="filters" onSubmit={apply} aria-label="Filter work">
+      {/* The key resets the fields to the filter in force, so Clear filters empties them. */}
+      <form
+        key={`${filter.repo}\n${filter.source}`}
+        className="filters"
+        onSubmit={apply}
+        aria-label="Filter work"
+      >
         <label>
-          Repository <input name="repo" placeholder="owner/name" defaultValue={filter.repo} />
+          Repository{" "}
+          <input ref={repoField} name="repo" placeholder="owner/name" defaultValue={filter.repo} />
         </label>
         <label>
           Source <input name="source" placeholder="github" defaultValue={filter.source} />
         </label>
         <button type="submit">Filter</button>
       </form>
+      {filter.repo || filter.source ? (
+        <p className="filtered">
+          Showing only work{filter.repo ? ` in ${filter.repo}` : ""}
+          {filter.source ? ` from ${filter.source}` : ""}.{" "}
+          <button type="button" onClick={clear}>
+            Clear filters
+          </button>
+        </p>
+      ) : null}
       <Status {...poll} />
       {data ? (
         <div className="board">
@@ -51,8 +74,9 @@ export function Board() {
                 <h2 id={`col-${state}`}>
                   {label(state)} <span className="count">{count}</span>
                 </h2>
+                {next_cursor ? <p className="meta">Showing the first {LIMIT}.</p> : null}
                 {items.length === 0 ? (
-                  <p className="empty">None</p>
+                  <p className="empty">No work items.</p>
                 ) : (
                   <ul>
                     {items.map((item) => (

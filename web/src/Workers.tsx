@@ -11,7 +11,12 @@ export function Workers() {
     <>
       <h1 tabIndex={-1}>Workers</h1>
       <Status {...poll} />
-      {data && data.workers.length === 0 ? <p>No worker has registered.</p> : null}
+      {data && data.workers.length === 0 ? (
+        <p>
+          No worker has registered. A worker registers when <code>factory worker</code> starts, on a
+          machine or in a sandbox the launcher starts.
+        </p>
+      ) : null}
       <ul className="cards">
         {data?.workers.map((w) => (
           <li key={w.id} className="card">

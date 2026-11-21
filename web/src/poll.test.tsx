@@ -39,7 +39,7 @@ test("a failed refresh keeps the data and says it is stale", async () => {
   const routes: Record<string, unknown> = { "/workers": workers };
   mockAPI(routes);
   renderWithAPI(<Workers />);
-  expect(await screen.findByText("No worker has registered.")).toBeInTheDocument();
+  expect(await screen.findByText(/^No worker has registered\./)).toBeInTheDocument();
 
   routes["/workers"] = down;
   await vi.advanceTimersByTimeAsync(POLL_MS);
@@ -48,7 +48,7 @@ test("a failed refresh keeps the data and says it is stale", async () => {
       /^Could not refresh: database unavailable\. Showing data from .+\. Trying again every 5 seconds\.$/
     )
   );
-  expect(screen.getByText("No worker has registered.")).toBeInTheDocument();
+  expect(screen.getByText(/^No worker has registered\./)).toBeInTheDocument();
 
   // It recovers by itself.
   routes["/workers"] = workers;

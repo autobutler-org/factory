@@ -18,7 +18,9 @@ export function ago(at: string, now = Date.now()): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-export const label = (state: string) => state.replaceAll("_", " ");
+// label writes a state or event type as words. Headings capitalize it in CSS (.column h2).
+export const label = (state: string) =>
+  state === "wont_fix" ? "won't fix" : state.replaceAll("_", " ");
 
 // The color role of every state the API returns: work items, steps, outputs and workers. One
 // state, one role, everywhere; style.css colors each role from a token. Unknown states are neutral.
