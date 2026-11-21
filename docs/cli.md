@@ -16,7 +16,7 @@ conventions below. The settings of `serve`, `worker` and `migrate` are in [confi
   also accepts `-name`.
 - One command table in `cmd/factory/commands.go` holds every command's name, arguments, summary and description,
   and each command defines its flags with their help text. `factory --help`, each command's usage, and dispatch are
-  all generated from it, so help cannot drift from behavior.
+  all generated from it, and so is shell completion, so neither can drift from behavior.
 
 ## Talking to a server
 
@@ -35,6 +35,7 @@ an older server does not have.
 
 | Command | Does |
 | --- | --- |
+| `factory completion bash\|zsh\|fish` | Print a completion script generated from the command table: commands, groups, and each command's flags. Load it with `source <(factory completion bash)` (or `zsh`), or `factory completion fish \| source`. |
 | `factory doctor [--worker]` | Check the setup; see below. |
 | `factory migrate up`, `down`, `status` | Apply, roll back one, or report the database migrations. |
 | `factory serve` | Serve the HTTP API and the web UI. |
