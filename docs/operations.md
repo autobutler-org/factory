@@ -123,6 +123,14 @@ kubectl -n factory-workers get jobs -l app.kubernetes.io/name=factory-worker --w
 The events list the item's transitions, oldest first, with the reason for any block. The graph answers `404` until
 the item is planned, then shows each step and its state. The web UI at `http://127.0.0.1:8080/` shows the same item.
 
+Check the whole setup with `factory doctor`, through the port-forward and token above:
+
+```sh
+FACTORY_SERVER=http://127.0.0.1:8080 factory doctor
+```
+
+Each failing check prints its fix; [cli.md](cli.md#factory-doctor) lists the checks.
+
 ## Upgrade
 
 On our cluster a release tag upgrades it ([Deploying a release](#deploying-a-release)). Elsewhere, run the same

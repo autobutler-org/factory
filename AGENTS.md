@@ -21,6 +21,7 @@ internal/plan/      the pure planner: work item to step graph, and which step ma
 internal/api/       the HTTP API handlers and middleware (docs/api.md); no SQL, no state rules
 internal/codehost/  the code host (GitHub): pull requests, checks, merge, App tokens; codehost.Fake and fakegh/ for tests (#10)
 internal/sandbox/   starts, tracks, and destroys worker sandboxes (Kubernetes Jobs), execs into them (#9), reads their logs (#50)
+internal/doctor/    the checks `factory doctor` reports (server side, worker image, version); pass, fail or skip with a fix
 internal/apiclient/ the HTTP client of the factory API that the worker and the CLI share; errors as *apiclient.Error
 internal/worker/    the step executor `factory worker` runs: protocol client, heartbeat, and each step kind (#11)
 internal/harness/   drives agent CLIs (Claude Code, Grok) for a session; harness.Fake for tests

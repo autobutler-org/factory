@@ -1,0 +1,12 @@
+$ factory doctor --worker --work-dir $TMP/work
+exit 1
+--- stdout
+fail  git                    exec: "git": executable file not found in $PATH
+        fix:                 install git in the worker image and put it on PATH
+fail  agent CLI claude-code  harness not installed: "claude" was not found; install Claude Code (https://claude.com/claude-code) and make sure it is on PATH
+        fix:                 install it and log in, or leave it out of --harnesses
+fail  agent CLI grok         harness not installed: "grok" was not found; install the Grok CLI (https://x.ai/cli/install.sh) and make sure it is on PATH
+        fix:                 install it and log in, or leave it out of --harnesses
+pass  workspace writable     $TMP/work
+--- stderr
+factory doctor: 3 check(s) failed: git, agent CLI claude-code, agent CLI grok. Fix each as shown, then run 'factory doctor' again.

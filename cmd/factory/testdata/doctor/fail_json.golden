@@ -1,0 +1,58 @@
+$ factory doctor --output json
+exit 1
+--- stdout
+{
+  "checks": [
+    {
+      "name": "server reachable",
+      "status": "pass",
+      "detail": "$SERVER"
+    },
+    {
+      "name": "token accepted",
+      "status": "pass",
+      "detail": "the server asks for no token: it is unauthenticated, on loopback"
+    },
+    {
+      "name": "version compatible",
+      "status": "skip",
+      "detail": "this factory dev, server v9.0.0; a build that is not a release cannot be compared"
+    },
+    {
+      "name": "database reachable and migrated",
+      "status": "fail",
+      "detail": "database is behind this binary's migrations: run `factory migrate up`",
+      "fix": "apply the migrations to the server's database with `factory migrate up`",
+      "command": "factory migrate up"
+    },
+    {
+      "name": "code host credential",
+      "status": "fail",
+      "detail": "no GitHub App is configured",
+      "fix": "start the server with --github-app-id and --github-app-key-file"
+    },
+    {
+      "name": "sandbox runtime reachable",
+      "status": "pass",
+      "detail": "0 worker sandbox(es) exist"
+    },
+    {
+      "name": "cluster worker active",
+      "status": "fail",
+      "detail": "no cluster worker is active",
+      "fix": "start one"
+    }
+  ],
+  "failed": [
+    "database reachable and migrated",
+    "code host credential",
+    "cluster worker active"
+  ],
+  "not_checked": [
+    "each configured adapter has its secret (adapters: #7, #8)",
+    "the stored sign-in is valid and its role (sign-in: #15)",
+    "the telemetry exporter is delivering (telemetry: #13)"
+  ]
+}
+--- stderr
+factory doctor: 3 check(s) failed: database reachable and migrated, code host credential, cluster worker active. Fix each as shown, then run 'factory doctor' again.

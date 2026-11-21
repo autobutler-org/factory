@@ -1,0 +1,18 @@
+$ factory doctor
+exit 0
+--- stdout
+pass  server reachable                 $SERVER
+pass  token accepted                   the server asks for no token: it is unauthenticated, on loopback
+pass  version compatible               this factory dev, server dev
+pass  database reachable and migrated  
+pass  code host credential             the App authenticates and has 1 installation(s)
+skip  sandbox runtime reachable        the launcher is off (--launcher=false), so the server starts no sandboxes
+pass  cluster worker active            1 active
+
+Not checked yet, because the feature has not landed:
+  each configured adapter has its secret (adapters: #7, #8)
+  the stored sign-in is valid and its role (sign-in: #15)
+  the telemetry exporter is delivering (telemetry: #13)
+
+Every check passed.
+--- stderr
