@@ -21,7 +21,8 @@ make test/e2e   # the worker's end-to-end tests, against the same Postgres
 Run the server against a migrated database with `factory migrate up` then `factory serve`, and a worker with
 `factory worker --url ...`; [docs/config.md](docs/config.md) lists the settings and [docs/api.md](docs/api.md) the
 routes. The server serves the web UI on every other path: a board of work by state, each item with its step graph
-and timeline, and the workers. It asks for `FACTORY_API_TOKEN` once per tab. [docs/operations.md](docs/operations.md) covers the container images and installing the Helm chart in
+and timeline, and the workers. It asks for `FACTORY_API_TOKEN` once per tab and refreshes every 5 seconds until
+**Pause updates** in the header stops it. [docs/operations.md](docs/operations.md) covers the container images and installing the Helm chart in
 `deploy/chart`.
 
 See [AGENTS.md](AGENTS.md) for the layout and conventions, and [CONTRIBUTING.md](CONTRIBUTING.md) for how to

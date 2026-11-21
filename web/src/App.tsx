@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { getter } from "./api";
 import { Board } from "./Board";
-import { Link, usePath } from "./nav";
+import { Link, usePath, useTitle } from "./nav";
 import { ApiContext } from "./poll";
 import { WorkItemPage } from "./WorkItem";
 import { Workers } from "./Workers";
@@ -29,6 +29,7 @@ function writeToken(token: string) {
 export function App() {
   const [token, setToken] = useState(readToken);
   const [refusedOnce, setRefusedOnce] = useState(false);
+  const [paused, setPaused] = useState(false);
 
   const save = (t: string) => {
     writeToken(t);
@@ -39,7 +40,7 @@ export function App() {
     setToken("");
     setRefusedOnce(true);
   }, []);
-  const api = useMemo(() => ({ get: getter(token), refused }), [token, refused]);
+  const api = useMemo(() => ({ get: getter(token), refused, paused }), [token, refused, paused]);
 
   return (
     <>
@@ -49,9 +50,14 @@ export function App() {
           <Link to="/">Board</Link>
           <Link to="/workers">Workers</Link>
           {token ? (
-            <button type="button" className="link" onClick={() => save("")}>
-              Forget token
-            </button>
+            <span className="actions">
+              <button type="button" aria-pressed={paused} onClick={() => setPaused(!paused)}>
+                Pause updates
+              </button>
+              <button type="button" className="link" onClick={() => save("")}>
+                Forget token
+              </button>
+            </span>
           ) : null}
         </nav>
       </header>
@@ -70,13 +76,28 @@ export function App() {
 
 function Page() {
   const path = usePath();
+  // After a client-side navigation, focus the new page's heading so keyboard and screen-reader
+  // users start there, as they would after a full load. The first render keeps the browser's focus.
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    document.querySelector<HTMLElement>("main h1")?.focus();
+  }, [path]);
   const work = /^\/work\/([^/]+)\/?$/.exec(path);
   if (work) return <WorkItemPage key={work[1]} id={decodeURIComponent(work[1])} />;
   if (path === "/workers" || path === "/workers/") return <Workers />;
   if (path === "/") return <Board />;
+  return <NotFound path={path} />;
+}
+
+function NotFound({ path }: { path: string }) {
+  useTitle("Not found");
   return (
     <>
-      <h1>Not found</h1>
+      <h1 tabIndex={-1}>Not found</h1>
       <p>
         No page at <code>{path}</code>. <Link to="/">Go to the board</Link>.
       </p>
@@ -85,6 +106,7 @@ function Page() {
 }
 
 function TokenForm({ refused, onSave }: { refused: boolean; onSave: (token: string) => void }) {
+  useTitle("API token");
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const t = String(new FormData(e.currentTarget).get("token") ?? "").trim();
@@ -92,13 +114,15 @@ function TokenForm({ refused, onSave }: { refused: boolean; onSave: (token: stri
   };
   return (
     <form className="token" onSubmit={submit}>
-      <h1>API token</h1>
+      <h1 tabIndex={-1}>API token</h1>
       {refused ? (
-        <p role="alert" className="error">
+        <p id="token-help" role="alert" className="error">
           The server refused that token. Enter the current FACTORY_API_TOKEN.
         </p>
       ) : (
-        <p>Enter the server&apos;s FACTORY_API_TOKEN. It is kept for this tab only.</p>
+        <p id="token-help">
+          Enter the server&apos;s FACTORY_API_TOKEN. It is kept for this tab only.
+        </p>
       )}
       <label>
         Token{" "}
@@ -109,6 +133,8 @@ function TokenForm({ refused, onSave }: { refused: boolean; onSave: (token: stri
           required
           autoFocus
           spellCheck={false}
+          aria-describedby="token-help"
+          aria-invalid={refused || undefined}
         />
       </label>
       <button type="submit">Continue</button>

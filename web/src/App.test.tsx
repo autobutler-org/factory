@@ -50,7 +50,11 @@ test("a refused token asks again with a clear message", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "The server refused that token. Enter the current FACTORY_API_TOKEN."
   );
-  expect(screen.getByLabelText("Token")).toBeInTheDocument();
+  const field = screen.getByLabelText("Token");
+  expect(field).toHaveAttribute("aria-invalid", "true");
+  expect(field).toHaveAccessibleDescription(
+    "The server refused that token. Enter the current FACTORY_API_TOKEN."
+  );
   expect(sessionStorage.getItem("factory.apiToken")).toBeNull();
 
   // The right token gets the board.
@@ -82,4 +86,41 @@ test("links move between pages without reloading", async () => {
   await userEvent.click(screen.getByRole("link", { name: "Workers" }));
   expect(await screen.findByText("No worker has registered.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Workers" })).toHaveAttribute("aria-current", "page");
+});
+
+test("a navigation titles the page and moves focus to its heading", async () => {
+  sessionStorage.setItem("factory.apiToken", "s3cret");
+  mockAPI({ ...emptyBoard, "/workers": { workers: [] } });
+  render(<App />);
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  expect(document.title).toBe("Board · factory");
+
+  await userEvent.click(screen.getByRole("link", { name: "Workers" }));
+  const heading = await screen.findByRole("heading", { level: 1, name: "Workers" });
+  expect(heading).toHaveFocus();
+  expect(document.title).toBe("Workers · factory");
+});
+
+test("the token prompt describes the field, and marks it invalid once refused", async () => {
+  mockAPI({});
+  render(<App />);
+  const field = screen.getByLabelText("Token");
+  expect(field).toHaveAccessibleDescription(
+    "Enter the server's FACTORY_API_TOKEN. It is kept for this tab only."
+  );
+  expect(field).not.toHaveAttribute("aria-invalid");
+  expect(document.title).toBe("API token · factory");
+});
+
+test("updates can be paused from the header", async () => {
+  sessionStorage.setItem("factory.apiToken", "s3cret");
+  mockAPI(emptyBoard);
+  render(<App />);
+  await screen.findByText(/^Updated /);
+  const pause = screen.getByRole("button", { name: "Pause updates" });
+  expect(pause).toHaveAttribute("aria-pressed", "false");
+
+  await userEvent.click(pause);
+  expect(pause).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText(/^Updates paused\. Showing data from /)).toBeInTheDocument();
 });

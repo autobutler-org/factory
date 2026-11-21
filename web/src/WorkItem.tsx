@@ -1,5 +1,6 @@
 import { ApiError, type Get, type Graph, type Output, type WorkEvent, type WorkItem } from "./api";
-import { label, State, Status, Time } from "./format";
+import { Block, label, State, Status, Time } from "./format";
+import { Link, useTitle } from "./nav";
 import { usePoll } from "./poll";
 
 async function load(id: string, get: Get, signal: AbortSignal) {
@@ -18,20 +19,34 @@ async function load(id: string, get: Get, signal: AbortSignal) {
 }
 
 export function WorkItemPage({ id }: { id: string }) {
-  const { data, error, updated } = usePoll(`work/${id}`, (get, signal) => load(id, get, signal));
+  const poll = usePoll(`work/${id}`, (get, signal) => load(id, get, signal));
+  const { data, error } = poll;
+  const missing = !data && error instanceof ApiError && error.status === 404;
+  useTitle(data?.item.title ?? (missing ? "Work item not found" : "Work item"));
+  if (missing) {
+    return (
+      <>
+        <h1 tabIndex={-1}>Work item not found</h1>
+        <p>
+          No work item has the ID <code>{id}</code>. The link may be wrong, or the item was removed.{" "}
+          <Link to="/">Go to the board</Link>.
+        </p>
+      </>
+    );
+  }
   if (!data) {
     return (
       <>
-        <h1>Work item</h1>
-        <Status error={error} updated={updated} />
+        <h1 tabIndex={-1}>Work item</h1>
+        <Status {...poll} />
       </>
     );
   }
   const { item, events, outputs, graph } = data;
   return (
     <>
-      <h1>{item.title}</h1>
-      <Status error={error} updated={updated} />
+      <h1 tabIndex={-1}>{item.title}</h1>
+      <Status {...poll} />
       <dl className="facts">
         <dt>State</dt>
         <dd>
@@ -41,7 +56,9 @@ export function WorkItemPage({ id }: { id: string }) {
           <>
             <dt>Reason</dt>
             <dd>
-              <pre className="reason">{item.state_reason}</pre>
+              <Block className="reason" label="Reason">
+                {item.state_reason}
+              </Block>
             </dd>
           </>
         ) : null}
@@ -77,7 +94,13 @@ export function WorkItemPage({ id }: { id: string }) {
 
       <section aria-labelledby="body">
         <h2 id="body">Body</h2>
-        {item.body ? <pre className="body">{item.body}</pre> : <p>No body.</p>}
+        {item.body ? (
+          <Block className="body" label="Body text">
+            {item.body}
+          </Block>
+        ) : (
+          <p>No body.</p>
+        )}
       </section>
 
       <section aria-labelledby="outputs">
@@ -152,13 +175,17 @@ function Steps({ graph, events }: { graph: Graph | null; events: WorkEvent[] }) 
               {reason ? (
                 <details open={s.state === "failed"}>
                   <summary>{s.state === "failed" ? "Failure reason" : "Last reason"}</summary>
-                  <pre className="reason">{reason}</pre>
+                  <Block className="reason" label={`Reason for ${s.key}`}>
+                    {reason}
+                  </Block>
                 </details>
               ) : null}
               {s.result != null ? (
                 <details>
                   <summary>Result</summary>
-                  <pre className="reason">{JSON.stringify(s.result, null, 2)}</pre>
+                  <Block className="reason" label={`Result of ${s.key}`}>
+                    {JSON.stringify(s.result, null, 2)}
+                  </Block>
                 </details>
               ) : null}
             </li>
@@ -192,15 +219,21 @@ function Timeline({ events }: { events: WorkEvent[] }) {
                 // The step graph shows a step's reason open; here it folds so the timeline reads.
                 <details>
                   <summary>Reason ({reason.split("\n").length} lines)</summary>
-                  <pre className="reason">{reason}</pre>
+                  <Block className="reason" label={`Reason: ${label(e.type)}`}>
+                    {reason}
+                  </Block>
                 </details>
               ) : typeof reason === "string" && reason ? (
-                <pre className="reason">{reason}</pre>
+                <Block className="reason" label={`Reason: ${label(e.type)}`}>
+                  {reason}
+                </Block>
               ) : null}
               {Object.keys(rest).length ? (
                 <details>
                   <summary>Details</summary>
-                  <pre className="reason">{JSON.stringify(rest, null, 2)}</pre>
+                  <Block className="reason" label={`Details: ${label(e.type)}`}>
+                    {JSON.stringify(rest, null, 2)}
+                  </Block>
                 </details>
               ) : null}
             </li>
