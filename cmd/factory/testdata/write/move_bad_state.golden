@@ -1,0 +1,6 @@
+$ factory work move 0b8c1f9e-0000-4000-8000-000000000002 sideways
+exit 2
+--- stdout
+--- stderr
+factory work move: "sideways" is not a state; use one of design, ready, in_progress, in_review, blocked, failed, completed, wont_fix
+Run 'factory work move --help' for usage.
