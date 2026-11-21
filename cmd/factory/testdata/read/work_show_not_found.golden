@@ -1,0 +1,5 @@
+$ factory work show nope
+exit 1
+--- stdout
+--- stderr
+factory work show: work item not found. Run 'factory work list' to find an item's ID.

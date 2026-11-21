@@ -1,0 +1,6 @@
+$ factory work list --state sideways
+exit 2
+--- stdout
+--- stderr
+factory work list: --state "sideways" is not a state; use one of design, ready, in_progress, in_review, blocked, failed, completed, wont_fix
+Run 'factory work list --help' for usage.

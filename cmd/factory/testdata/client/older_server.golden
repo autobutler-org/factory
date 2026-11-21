@@ -1,0 +1,5 @@
+$ factory status
+exit 1
+--- stdout
+--- stderr
+factory status: no route for GET /api/v1/status. The server may be older than this factory; run 'factory doctor' to compare versions.

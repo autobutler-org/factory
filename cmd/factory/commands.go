@@ -50,8 +50,12 @@ func commands() []command {
 		migrateCommand("status", "Print the applied version and each migration as applied or pending."),
 		migrateCommand("up", "Apply every pending migration."),
 		serveCommand(),
+		statusCommand(),
 		versionCommand(),
+		workListCommand(),
+		workShowCommand(),
 		workerCommand(),
+		workersListCommand(),
 	}
 }
 

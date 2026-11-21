@@ -1,0 +1,5 @@
+$ factory status
+exit 1
+--- stdout
+--- stderr
+factory status: the server answered 502 with no factory error. Check that --server or FACTORY_SERVER points at a factory server; run 'factory doctor'.

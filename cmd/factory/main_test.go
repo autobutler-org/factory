@@ -6,14 +6,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// nextStep matches an error message that says what to do next.
+var nextStep = regexp.MustCompile(`(?i)\b(run|set|pass|use|check|start|install|fix|point|log in)\b`)
 
 // golden compares got with testdata/<name>.golden. UPDATE_GOLDEN=1 (make
 // test/golden) rewrites the file instead.
 func golden(t *testing.T, name, got string) {
 	t.Helper()
+	if strings.Contains(got, "\nexit ") && !strings.Contains(got, "\nexit 0\n") {
+		_, stderr, _ := strings.Cut(got, "--- stderr\n")
+		if !nextStep.MatchString(stderr) {
+			t.Errorf("%s fails without saying what to do next:\n%s", name, stderr)
+		}
+	}
 	path := filepath.Join("testdata", name+".golden")
 	if os.Getenv("UPDATE_GOLDEN") != "" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

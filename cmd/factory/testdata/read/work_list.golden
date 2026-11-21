@@ -1,0 +1,7 @@
+$ factory work list
+exit 0
+--- stdout
+ID                                    STATE        PRIORITY  REPOS                 TITLE
+0b8c1f9e-0000-4000-8000-000000000001  in_progress  2         autobutler-org/quark  add null check to the importer
+0b8c1f9e-0000-4000-8000-000000000002  ready        0         autobutler-org/infra  rotate the staging certificates
+--- stderr

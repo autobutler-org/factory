@@ -1,0 +1,7 @@
+$ factory workers list
+exit 0
+--- stdout
+NAME      KIND     STATE   VERSION  LAST SEEN            HOLDS
+worker-a  cluster  active  v0.3.0   2026-11-18 12:05:00  0b8c1f9e-0000-4000-8000-000000000001 autobutler-org/quark/implement
+worker-b  cluster  gone    v0.3.0   2026-11-17 10:00:00  
+--- stderr
