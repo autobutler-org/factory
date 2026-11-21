@@ -81,6 +81,8 @@ workers:
       # npm packages and Node headers.
       - registry.npmjs.org
       - nodejs.org
+      # quark's release container, public and read-only; one of its backend unit tests lists it.
+      - quarkrelease.blob.core.windows.net
 
 # The cluster's CNI is Cilium with FQDN egress policy available.
 networkPolicy:
