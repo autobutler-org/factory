@@ -49,8 +49,18 @@ func fakeApp(t *testing.T, key *rsa.PublicKey, expires time.Time) *httptest.Serv
 		}
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/users/autobutler-factory[bot]" {
+			// A public profile, read without auth: the App JWT is for /app endpoints only.
+			if got := r.Header.Get("Authorization"); got != "" {
+				t.Errorf("GET %s: Authorization = %q, want none", r.URL.Path, got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"login": "autobutler-factory[bot]", "id": 342131938, "type": "Bot"})
+			return
+		}
 		checkJWT(r)
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/app":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 12345, "slug": "autobutler-factory"})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/installation":
 			_ = json.NewEncoder(w).Encode(map[string]int64{"id": 61234567})
 		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/61234567/access_tokens":
@@ -214,5 +224,57 @@ func TestRefreshingTokenFeedsGitHub(t *testing.T) {
 	}}).Get
 	if _, err := g.DefaultBranch(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestIdentity reads the App's slug with the App JWT and its bot user's ID
+// without one, and builds the bot's noreply identity from them.
+func TestIdentity(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := fakeApp(t, &key.PublicKey, time.Now().Add(time.Hour))
+	got, err := TokenMinter{AppID: "12345", Key: key, API: gh.URL}.Identity(t.Context())
+	want := Identity{Name: "autobutler-factory[bot]", Email: "342131938+autobutler-factory[bot]@users.noreply.github.com"}
+	if err != nil || got != want {
+		t.Fatalf("Identity = %+v, %v; want %+v", got, err, want)
+	}
+}
+
+func TestIdentityReportsGitHubRefusal(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+	}))
+	t.Cleanup(gh.Close)
+	if _, err := (TokenMinter{AppID: "1", Key: key, API: gh.URL}).Identity(t.Context()); err == nil || !strings.Contains(err.Error(), "Bad credentials") {
+		t.Errorf("err = %v, want GitHub's message", err)
+	}
+}
+
+// TestIdentityCache looks up once on success and again after a failure.
+func TestIdentityCache(t *testing.T) {
+	var lookups atomic.Int32
+	fail := errors.New("github down")
+	c := &IdentityCache{Lookup: func(context.Context) (Identity, error) {
+		if lookups.Add(1) == 1 {
+			return Identity{}, fail
+		}
+		return Identity{Name: "a[bot]", Email: "1+a[bot]@users.noreply.github.com"}, nil
+	}}
+	if _, err := c.Get(t.Context()); !errors.Is(err, fail) {
+		t.Fatalf("first Get = %v, want the lookup error", err)
+	}
+	for range 3 {
+		if got, err := c.Get(t.Context()); err != nil || got.Name != "a[bot]" {
+			t.Fatalf("Get = %+v, %v", got, err)
+		}
+	}
+	if n := lookups.Load(); n != 2 {
+		t.Errorf("lookups = %d, want 2: one failed, one cached", n)
 	}
 }

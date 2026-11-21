@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/autobutler-org/factory/internal/codehost"
 	"github.com/autobutler-org/factory/internal/repoconfig"
 	"github.com/autobutler-org/factory/internal/secretscan"
 )
@@ -28,11 +29,10 @@ import (
 const (
 	// gitTimeout bounds one git command.
 	gitTimeout = 10 * time.Minute
-	// gitName and gitEmail author the worker's commits.
+	// gitName and gitEmail author the worker's commits when the server
+	// sends no commit identity with the token.
 	gitName  = "factory"
 	gitEmail = "factory@users.noreply.github.com"
-	// signOff is the trailer git commit -s adds for that identity.
-	signOff = "Signed-off-by: " + gitName + " <" + gitEmail + ">"
 )
 
 var (
@@ -53,14 +53,15 @@ var (
 type tree struct {
 	root, repoDir, dir string
 	url, base, branch  string
-	// token returns the step's current code host token.
-	token func(context.Context) (string, error)
+	// token returns the step's current code host token and the identity
+	// to commit as.
+	token func(context.Context) (codehost.Token, error)
 }
 
 // treeSpec says where a sandbox's checkout lives and what it checks out.
 type treeSpec struct {
 	root, url, base, branch string
-	token                   func(context.Context) (string, error)
+	token                   func(context.Context) (codehost.Token, error)
 }
 
 // openTree returns the sandbox's checkout on spec.branch, creating what is
@@ -114,7 +115,7 @@ func openTree(ctx context.Context, s treeSpec) (*tree, error) {
 }
 
 // defaultBranch is the branch the remote's HEAD points at.
-func defaultBranch(ctx context.Context, root, url string, token func(context.Context) (string, error)) (string, error) {
+func defaultBranch(ctx context.Context, root, url string, token func(context.Context) (codehost.Token, error)) (string, error) {
 	t := &tree{root: root, url: url, token: token}
 	if err := os.MkdirAll(root, 0o750); err != nil {
 		return "", fmt.Errorf("create the sandbox directory: %w; check that --work-dir is writable", err)
@@ -139,7 +140,8 @@ func basicAuth(token string) string {
 	return base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
 }
 
-// git runs one git command in dir with the step's current token. The token
+// git runs one git command in dir with the step's current token, as the
+// commit identity the server sent with it, or factory without one. The token
 // goes in through the environment, so it is never written to git config or
 // shown in the process list, and it is read for each command, so a push late
 // in a long step does not send an expired one.
@@ -147,6 +149,10 @@ func (t *tree) git(ctx context.Context, dir string, args ...string) (string, err
 	token, err := t.token(ctx)
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	name, email := gitName, gitEmail
+	if id := token.CommitIdentity; id != nil && id.Name != "" && id.Email != "" {
+		name, email = id.Name, id.Email
 	}
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
@@ -156,11 +162,11 @@ func (t *tree) git(ctx context.Context, dir string, args ...string) (string, err
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_AUTHOR_NAME="+gitName, "GIT_AUTHOR_EMAIL="+gitEmail,
-		"GIT_COMMITTER_NAME="+gitName, "GIT_COMMITTER_EMAIL="+gitEmail,
+		"GIT_AUTHOR_NAME="+name, "GIT_AUTHOR_EMAIL="+email,
+		"GIT_COMMITTER_NAME="+name, "GIT_COMMITTER_EMAIL="+email,
 		"GIT_CONFIG_COUNT=1",
 		"GIT_CONFIG_KEY_0=http.extraHeader",
-		"GIT_CONFIG_VALUE_0=Authorization: Basic "+basicAuth(token),
+		"GIT_CONFIG_VALUE_0=Authorization: Basic "+basicAuth(token.Token),
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -239,8 +245,8 @@ func (t *tree) hasSubject(ctx context.Context, subject string) (bool, error) {
 }
 
 // firstMessage is the subject and body of the branch's first commit after
-// the base without its sign-off: the pull request text the implement step
-// committed.
+// the base without its trailing sign-off, whoever signed it: the pull
+// request text the implement step committed.
 func (t *tree) firstMessage(ctx context.Context) (subject, body string, err error) {
 	out, err := t.git(ctx, t.dir, "rev-list", "--reverse", t.baseRef()+"..HEAD")
 	if err != nil || out == "" {
@@ -249,7 +255,11 @@ func (t *tree) firstMessage(ctx context.Context) (subject, body string, err erro
 	first, _, _ := strings.Cut(out, "\n")
 	msg, err := t.git(ctx, t.dir, "log", "-1", "--format=%B", first)
 	subject, body, _ = strings.Cut(msg, "\n")
-	return strings.TrimSpace(subject), strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(body), signOff)), err
+	body = strings.TrimSpace(body)
+	if i := strings.LastIndex(body, "\n") + 1; strings.HasPrefix(body[i:], "Signed-off-by: ") {
+		body = body[:i]
+	}
+	return strings.TrimSpace(subject), strings.TrimSpace(body), err
 }
 
 // head is the commit HEAD points at.
@@ -282,7 +292,7 @@ func (t *tree) scanSecrets(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	found, err := secretscan.ScanDiff(ctx, t.dir, t.baseRef(), []string{token})
+	found, err := secretscan.ScanDiff(ctx, t.dir, t.baseRef(), []string{token.Token})
 	if err != nil {
 		return fmt.Errorf("scan the branch's changes for secrets: %w", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,15 @@ var ErrBadPrivateKey = errors.New("GitHub App private key is not a PEM-encoded R
 type Token struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
+	// CommitIdentity, when set, is who the worker commits as. The factory
+	// server adds it beside the token; GitHub never sends it.
+	CommitIdentity *Identity `json:"commit_identity,omitempty"`
+}
+
+// Identity is a git author and committer.
+type Identity struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
 // TokenMinter mints GitHub App installation tokens.
@@ -86,8 +96,8 @@ func (m TokenMinter) appJWT(now time.Time) (string, error) {
 	return signing + "." + enc.EncodeToString(sig), nil
 }
 
-// appCall makes one request authenticated as the App and decodes a reply
-// with status want into out.
+// appCall makes one request authenticated as the App, or unauthenticated
+// when jwt is empty, and decodes a reply with status want into out.
 func (m TokenMinter) appCall(ctx context.Context, jwt, method, path string, in any, want int, out any) error {
 	var body io.Reader
 	if in != nil {
@@ -105,7 +115,9 @@ func (m TokenMinter) appCall(ctx context.Context, jwt, method, path string, in a
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+jwt)
+	if jwt != "" {
+		req.Header.Set("Authorization", "Bearer "+jwt)
+	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 	client := m.Client
@@ -176,6 +188,67 @@ func (m TokenMinter) Mint(ctx context.Context, repo string) (Token, error) {
 	return token, nil
 }
 
+// Identity is the App's bot account as a git identity: name "<slug>[bot]"
+// and email "<bot user ID>+<slug>[bot]@users.noreply.github.com", the
+// address GitHub links to the bot. It reads the slug from GET /app with the
+// App JWT and the bot's user ID from its public profile, GET
+// /users/<slug>[bot], without auth, since the App JWT is for /app endpoints
+// only. The noreply domain is github.com's; a GitHub Enterprise Server's may
+// differ, so the caller decides whether to use it there.
+func (m TokenMinter) Identity(ctx context.Context) (Identity, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	jwt, err := m.appJWT(time.Now())
+	if err != nil {
+		return Identity{}, err
+	}
+	var app struct {
+		Slug string `json:"slug"`
+	}
+	if err := m.appCall(ctx, jwt, http.MethodGet, "/app", nil, http.StatusOK, &app); err != nil {
+		return Identity{}, fmt.Errorf("read the GitHub App's slug: %w", err)
+	}
+	if app.Slug == "" {
+		return Identity{}, errors.New("read the GitHub App's slug: GET /app returned none")
+	}
+	login := app.Slug + "[bot]"
+	var user struct {
+		ID int64 `json:"id"`
+	}
+	if err := m.appCall(ctx, "", http.MethodGet, "/users/"+url.PathEscape(login), nil, http.StatusOK, &user); err != nil {
+		return Identity{}, fmt.Errorf("read the user ID of %s: %w", login, err)
+	}
+	if user.ID == 0 {
+		return Identity{}, fmt.Errorf("read the user ID of %s: GitHub returned none", login)
+	}
+	return Identity{Name: login, Email: fmt.Sprintf("%d+%s@users.noreply.github.com", user.ID, login)}, nil
+}
+
+// IdentityCache remembers the first identity Lookup returns. A failed lookup
+// is not remembered, so the next Get tries again: a GitHub outage at the
+// first request costs that request its identity, not the server its start.
+type IdentityCache struct {
+	Lookup func(context.Context) (Identity, error)
+
+	mu  sync.Mutex
+	got *Identity
+}
+
+// Get returns the cached identity, looking it up first if there is none.
+func (c *IdentityCache) Get(ctx context.Context) (Identity, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.got != nil {
+		return *c.got, nil
+	}
+	id, err := c.Lookup(ctx)
+	if err != nil {
+		return Identity{}, err
+	}
+	c.got = &id
+	return id, nil
+}
+
 // tokenRefreshMargin is how long before its expiry a token is replaced.
 const tokenRefreshMargin = 5 * time.Minute
 
@@ -194,17 +267,23 @@ type RefreshingToken struct {
 // Get returns a token that is not about to expire. A failed refresh returns
 // an error and keeps the old token, so the next call tries again.
 func (r *RefreshingToken) Get(ctx context.Context) (string, error) {
+	token, err := r.Token(ctx)
+	return token.Token, err
+}
+
+// Token is Get with everything Fetch returned beside the token.
+func (r *RefreshingToken) Token(ctx context.Context) (Token, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !stale(r.cur, time.Now()) {
-		return r.cur.Token, nil
+		return r.cur, nil
 	}
 	token, err := r.Fetch(ctx)
 	if err != nil {
-		return "", fmt.Errorf("refresh the GitHub token: %w", err)
+		return Token{}, fmt.Errorf("refresh the GitHub token: %w", err)
 	}
 	r.cur = token
-	return token.Token, nil
+	return token, nil
 }
 
 // Current returns the token held now without refreshing it, or "" before the

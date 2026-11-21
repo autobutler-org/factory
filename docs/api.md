@@ -43,7 +43,7 @@ to have yours used instead.
 Cluster workers claim steps (`POST /api/v1/workers/{id}/claim`) and report on them under
 `/api/v1/steps/{id}/` (`stage`, `result`, `release`); adapters complete wait steps with
 `POST /api/v1/steps/{id}/complete`. Developers claim whole items under `/api/v1/work/{id}/` (`claim`, `stage`,
-`result`, `release`, `outputs`). Either kind of claimant gets code host tokens from
+`result`, `release`, `outputs`). Either kind of claimant gets code host tokens, and the identity to commit as, from
 `POST /api/v1/work/{id}/codehost-token`. All of it is specified in [architecture/workers.md](architecture/workers.md), with
 the error codes workers handle (`not_claimant`, `lease_expired`, `worker_not_active`, `not_waiting`).
 

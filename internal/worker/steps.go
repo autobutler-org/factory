@@ -33,7 +33,11 @@ type stepRun struct {
 		Branch   string `json:"branch"`
 		Findings string `json:"findings"`
 	}
+	// tokens is the token source for the code host API; token is the same
+	// source with the commit identity the server sends beside the token,
+	// for git.
 	tokens func(context.Context) (string, error)
+	token  func(context.Context) (codehost.Token, error)
 }
 
 func newStepRun(e *executor, claim Claim) (*stepRun, error) {
@@ -45,7 +49,8 @@ func newStepRun(e *executor, claim Claim) (*stepRun, error) {
 		return nil, fmt.Errorf("step %s names no repo in its params", claim.Step.Key)
 	}
 	s.repo = s.params.Repo
-	s.tokens = e.tokens(claim, s.repo)
+	source := e.tokens(claim, s.repo)
+	s.tokens, s.token = source.Get, source.Token
 	return s, nil
 }
 
@@ -81,7 +86,7 @@ func (s *stepRun) tree(ctx context.Context) (*tree, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openTree(ctx, treeSpec{root: root, url: s.url(), base: ws.Base, branch: ws.Branch, token: s.tokens})
+	return openTree(ctx, treeSpec{root: root, url: s.url(), base: ws.Base, branch: ws.Branch, token: s.token})
 }
 
 // prepare opens the checkout and reads the repository's config from its
@@ -129,11 +134,11 @@ func (s *stepRun) workspace(ctx context.Context) outcome {
 	if err != nil {
 		return final(err)
 	}
-	base, err := defaultBranch(ctx, root, s.url(), s.tokens)
+	base, err := defaultBranch(ctx, root, s.url(), s.token)
 	if err != nil {
 		return retry(err)
 	}
-	t, err := openTree(ctx, treeSpec{root: root, url: s.url(), base: base, branch: s.params.Branch, token: s.tokens})
+	t, err := openTree(ctx, treeSpec{root: root, url: s.url(), base: base, branch: s.params.Branch, token: s.token})
 	if err != nil {
 		return retry(err)
 	}

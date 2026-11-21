@@ -6,7 +6,8 @@ import (
 
 // codehostToken is POST /api/v1/work/{id}/codehost-token: the worker holding the
 // item asks for a short-lived code host token for one of its repositories.
-// The token is in the response only; it is never logged.
+// The token is in the response only; it is never logged. The commit identity
+// rides along when there is one.
 func (h handlers) codehostToken(w http.ResponseWriter, r *http.Request) {
 	if h.cfg.MintToken == nil {
 		writeError(w, r, http.StatusServiceUnavailable, "codehost_not_configured",
@@ -26,5 +27,13 @@ func (h handlers) codehostToken(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"repo": req.Repo, "token": token.Token, "expires_at": token.ExpiresAt})
+	reply := map[string]any{"repo": req.Repo, "token": token.Token, "expires_at": token.ExpiresAt}
+	if h.cfg.CommitIdentity != nil {
+		if id, err := h.cfg.CommitIdentity(r.Context()); err != nil {
+			h.cfg.Logger.WarnContext(r.Context(), "no commit identity for the worker; it commits as factory", "err", err)
+		} else {
+			reply["commit_identity"] = id
+		}
+	}
+	writeJSON(w, http.StatusOK, reply)
 }

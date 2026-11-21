@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/autobutler-org/factory/internal/api"
@@ -110,7 +111,7 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "factory serve: %v\n%s", err, serveUsage)
 		return 2
 	}
-	mintToken, err := githubApp(*appID, *appKeyFile, *githubAPI)
+	mintToken, commitIdentity, err := githubApp(*appID, *appKeyFile, *githubAPI)
 	if err != nil {
 		fmt.Fprintf(stderr, "factory serve: %v\n", err)
 		return 1
@@ -155,7 +156,14 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		logger.Warn("no GitHub App is configured: items are planned with default repository settings, " +
 			"not their .factory/config.toml. Set --github-app-id and --github-app-key-file to read it")
 	}
-	apiConfig := api.Config{Work: svc, Ready: ready, Token: token, Logger: logger, MintToken: mintToken, UI: server.UI(server.Public())}
+	if mintToken != nil && commitIdentity == nil {
+		logger.Warn("workers commit as factory, not as the GitHub App's bot: the bot's noreply email domain is known "+
+			"for github.com only", "github_api_url", *githubAPI)
+	}
+	apiConfig := api.Config{
+		Work: svc, Ready: ready, Token: token, Logger: logger, MintToken: mintToken, CommitIdentity: commitIdentity,
+		UI: server.UI(server.Public()),
+	}
 	if jobs != nil {
 		// Assigned only when set: a nil *Jobs in the interface would not be nil.
 		apiConfig.Sandboxes = jobs
@@ -217,21 +225,29 @@ func serveMain(ctx context.Context, args []string, stdout, stderr io.Writer) int
 }
 
 // githubApp returns the minter of repository tokens for the GitHub App with
-// appID and the private key in keyFile, or nil when no App is configured.
-// Errors name the file, never its contents.
-func githubApp(appID, keyFile, apiURL string) (func(context.Context, string) (codehost.Token, error), error) {
+// appID and the private key in keyFile, and the App bot's commit identity,
+// looked up on first use and then cached. Both are nil when no App is
+// configured, and the identity is nil off github.com, whose noreply domain
+// is the only one it knows. Errors name the file, never its contents.
+func githubApp(appID, keyFile, apiURL string) (
+	mint func(context.Context, string) (codehost.Token, error), identity func(context.Context) (codehost.Identity, error), err error,
+) {
 	if appID == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	pemBytes, err := os.ReadFile(keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("read --github-app-key-file: %w. Point it at the App's private key (.pem)", err)
+		return nil, nil, fmt.Errorf("read --github-app-key-file: %w. Point it at the App's private key (.pem)", err)
 	}
 	key, err := codehost.ParsePrivateKey(pemBytes)
 	if err != nil {
-		return nil, fmt.Errorf("--github-app-key-file %s: %w. Download a new private key from the App's settings", keyFile, err)
+		return nil, nil, fmt.Errorf("--github-app-key-file %s: %w. Download a new private key from the App's settings", keyFile, err)
 	}
-	return codehost.TokenMinter{AppID: appID, Key: key, API: apiURL}.Mint, nil
+	minter := codehost.TokenMinter{AppID: appID, Key: key, API: apiURL}
+	if strings.TrimSuffix(apiURL, "/") == codehost.DefaultGitHubAPI {
+		identity = (&codehost.IdentityCache{Lookup: minter.Identity}).Get
+	}
+	return minter.Mint, identity, nil
 }
 
 // reap runs the lease reaper, for item and step leases, every interval until

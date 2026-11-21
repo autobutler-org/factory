@@ -73,6 +73,9 @@ type fixture struct {
 	host   *codehost.Fake
 	agent  *harness.Fake
 	stages []string
+	// identity, when set, is the commit_identity JSON the token reply
+	// carries.
+	identity string
 }
 
 func newFixture(t *testing.T, gate string) *fixture {
@@ -84,7 +87,11 @@ func newFixture(t *testing.T, gate string) *fixture {
 	})
 	srv := http.NewServeMux()
 	srv.HandleFunc("POST /api/v1/work/{id}/codehost-token", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"repo":"o/r","token":"` + testToken + `"}`))
+		identity := ""
+		if f.identity != "" {
+			identity = `,"commit_identity":` + f.identity
+		}
+		_, _ = w.Write([]byte(`{"repo":"o/r","token":"` + testToken + `"` + identity + `}`))
 	})
 	srv.HandleFunc("POST /api/v1/steps/{id}/stage", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -178,8 +185,37 @@ func (f *fixture) chain() map[string]any {
 	return results
 }
 
-// wantSignOff is the trailer every commit the worker makes carries.
+// wantSignOff is the trailer every commit the worker makes carries when the
+// server sends no commit identity.
 const wantSignOff = "Signed-off-by: factory <factory@users.noreply.github.com>"
+
+// TestCommitsAsTheServersIdentity authors, commits and signs off as the
+// identity the token reply carries, and still reads the pull request text
+// without the sign-off.
+func TestCommitsAsTheServersIdentity(t *testing.T) {
+	f := newFixture(t, "true")
+	f.identity = `{"name":"app[bot]","email":"7+app[bot]@users.noreply.github.com"}`
+	results := f.chain()
+	bare := filepath.Join(f.origin, testRepo+".git")
+	const who = "app[bot] <7+app[bot]@users.noreply.github.com>"
+	if got := git(t, bare, "log", "-1", "--format=%an <%ae>|%cn <%ce>", testBranch); got != who+"|"+who {
+		t.Errorf("author|committer = %q, want %s for both", got, who)
+	}
+	if msg := git(t, bare, "log", "-1", "--format=%B", testBranch); msg != "Add hello\n\nAdds hello.txt.\n\nSigned-off-by: "+who {
+		t.Errorf("commit message = %q, want it signed off by %s", msg, who)
+	}
+	s, err := newStepRun(f.e, f.claim("open_pr", map[string]any{}, results))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := s.tree(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, body, err := tr.firstMessage(t.Context()); err != nil || body != "Adds hello.txt." {
+		t.Errorf("firstMessage body = %q, %v; want it without the sign-off", body, err)
+	}
+}
 
 func TestChainFromWorkspaceToReview(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "gate-ran")

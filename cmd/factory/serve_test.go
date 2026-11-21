@@ -3,12 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/autobutler-org/factory/internal/codehost"
 	"github.com/autobutler-org/factory/internal/db"
 	"github.com/autobutler-org/factory/internal/db/dbtest"
 )
@@ -98,5 +103,34 @@ func TestServeShutsDownGracefully(t *testing.T) {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("log %q does not mention %q", stderr.String(), want)
 		}
+	}
+}
+
+// TestGitHubAppCommitIdentity offers the bot's commit identity on github.com
+// only, whose noreply domain is the one it knows.
+func TestGitHubAppCommitIdentity(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "app.pem")
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, appID, api    string
+		wantMint, wantIdent bool
+	}{
+		{"no app", "", codehost.DefaultGitHubAPI, false, false},
+		{"github.com", "1", codehost.DefaultGitHubAPI, true, true},
+		{"github.com with a trailing slash", "1", codehost.DefaultGitHubAPI + "/", true, true},
+		{"enterprise server", "1", "https://ghe.example.com/api/v3", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mint, identity, err := githubApp(tc.appID, keyFile, tc.api)
+			if err != nil || (mint != nil) != tc.wantMint || (identity != nil) != tc.wantIdent {
+				t.Errorf("githubApp = mint %v, identity %v, %v; want mint %v, identity %v", mint != nil, identity != nil, err, tc.wantMint, tc.wantIdent)
+			}
+		})
 	}
 }
