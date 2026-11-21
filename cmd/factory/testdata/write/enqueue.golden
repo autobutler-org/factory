@@ -1,0 +1,5 @@
+$ factory work enqueue --title rotate the staging certificates --repos autobutler-org/infra
+exit 0
+--- stdout
+Enqueued 0b8c1f9e-0000-4000-8000-000000000002: rotate the staging certificates (ready)
+--- stderr

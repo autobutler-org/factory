@@ -1,0 +1,5 @@
+$ factory work move waits in_progress
+exit 1
+--- stdout
+--- stderr
+factory work move: an item it is blocked by is unfinished. Run 'factory work show waits' to see what it waits on.

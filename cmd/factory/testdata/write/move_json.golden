@@ -1,0 +1,31 @@
+$ factory work move --output json 0b8c1f9e-0000-4000-8000-000000000002 design
+exit 0
+--- stdout
+{
+  "id": "0b8c1f9e-0000-4000-8000-000000000002",
+  "source": null,
+  "external_id": null,
+  "external_url": null,
+  "title": "rotate the staging certificates",
+  "body": "",
+  "repos": [
+    "autobutler-org/infra"
+  ],
+  "state": "design",
+  "stage": "",
+  "state_reason": "",
+  "priority": 0,
+  "attempts": 0,
+  "outputs_done": false,
+  "created_at": "2026-11-18T11:00:00Z",
+  "updated_at": "2026-11-18T11:00:00Z",
+  "state_changed_at": "2026-11-18T11:00:00Z",
+  "idempotency_key": "nightly",
+  "claimed_by": null,
+  "claimed_at": null,
+  "lease_expires_at": null,
+  "stage_reported_at": null,
+  "available_at": "2026-11-18T11:00:00Z",
+  "requires": []
+}
+--- stderr

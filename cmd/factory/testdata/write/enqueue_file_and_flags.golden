@@ -1,0 +1,6 @@
+$ factory work enqueue --file $TMP/item.json --title x
+exit 2
+--- stdout
+--- stderr
+factory work enqueue: --file holds the whole item; drop --title or put it in the file
+Run 'factory work enqueue --help' for usage.

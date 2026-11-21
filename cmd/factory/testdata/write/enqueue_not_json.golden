@@ -1,0 +1,5 @@
+$ factory work enqueue --file $TMP/item.txt
+exit 1
+--- stdout
+--- stderr
+factory work enqueue: --file $TMP/item.txt is not JSON; fix it to hold one JSON object with the fields in docs/api.md

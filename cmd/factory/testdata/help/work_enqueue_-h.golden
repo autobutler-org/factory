@@ -1,0 +1,47 @@
+$ factory work enqueue -h
+exit 0
+--- stdout
+usage: factory work enqueue [flags]
+
+Enqueue one work item by value: --title and the other flags, or --file with
+the JSON body POST /api/v1/work takes (docs/api.md). Enqueueing an item that
+exists, by --source and --external-id or by --idempotency-key, returns it and
+creates nothing. Enqueueing by tracker URL waits on the input adapters (#7, #18).
+
+Flags:
+  --blocked-by ITEMS
+      comma-separated items (IDs or source:external_id) that must finish first
+  --body STRING
+      the item's description, the brief an agent works from
+  --external-id ID
+      the item's ID in its source, such as autobutler-org/quark#123
+  --external-url URL
+      the item's URL in its source
+  --file FILE
+      read the item from this JSON file; - reads stdin. No other item flag may
+      be given with it
+  --idempotency-key KEY
+      a key for work with no source: a repeat with the same key creates
+      nothing
+  --output FORMAT
+      output format: table or json (default table)
+  --priority INT
+      higher is handed out first
+  --repos REPOSITORIES
+      comma-separated repositories (owner/name) the work changes
+  --requires CAPABILITIES
+      comma-separated capabilities a worker needs, such as claude
+  --server URL
+      the factory server's URL, such as http://127.0.0.1:8080 (default
+      $FACTORY_SERVER)
+  --source STRING
+      the tracker the item comes from, such as github
+  --state STRING
+      design or ready (the server's default is ready)
+  --title TITLE
+      the item's title (required without --file)
+
+Environment:
+  FACTORY_SERVER       the server's URL when --server is not given
+  FACTORY_API_TOKEN    the API token the server was started with
+--- stderr
