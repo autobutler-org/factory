@@ -77,7 +77,27 @@ body, `source`, and `external_url` (or "created directly in the factory"). A ses
 runs in its own process group with `session_timeout`, and is killed when it writes no output for 15 minutes. When
 a harness reports a usage limit, the same request continues on the next harness with a note on how far the last one
 got; a harness at its limit is skipped for the rest of the process, and when none is left the step fails retryable.
-Sessions run with Claude Code's `--permission-mode acceptEdits` floor, as in schmeide.
+
+### What a session may do
+
+A Claude Code session runs with `--permission-mode bypassPermissions`: it may edit any file and run any command,
+such as the repository's gate, a build, tests, formatters or generators, without asking. A headless session has
+nobody to ask; under `acceptEdits`, the earlier default, the pinned Claude Code (2.1.327) refused every command
+outside a read-only allowlist ("This command requires approval"). Claude Code refuses `bypassPermissions` as root;
+the worker image runs as uid 1000. A Grok session keeps `--permission-mode acceptEdits`: the Grok CLI is not in
+the worker image, so its equivalent has not been checked.
+
+The sandbox is the boundary, not the session's permissions: the session runs in its own pod under Pod Security
+"restricted" (non-root, no capabilities, no privilege escalation), behind the worker egress policy
+([operations.md](../operations.md)), with a checkout it is free to break. It has no code host credential: the
+token goes to git per command and never into the session's environment or git config, so a `git push` from a
+session has nothing to authenticate with. Nothing a session does is pushed except by the worker, after the gate
+passes and the secret scan finds nothing, and a review session's changes are discarded.
+
+The session runs as the same user as the worker, though, so a session that goes looking can read the worker's
+environment through `/proc` and its factory API token at `/var/run/factory/token`, and call the factory API as
+the worker, including for a code host token for the repository its chain covers. The prompts tell a session not
+to push, and a review session not to edit, but nothing enforces it.
 
 ## Credentials and environment
 

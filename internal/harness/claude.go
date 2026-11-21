@@ -18,9 +18,12 @@ import (
 type ClaudeCode struct {
 	// Bin is the claude executable. Empty means "claude" on PATH.
 	Bin string
-	// Args are the session flags. Nil means "--permission-mode acceptEdits",
-	// which lets the session edit files in its working directory and nothing
-	// more. A worker that wants the session to run commands sets its own.
+	// Args are the session flags. Nil means "--permission-mode
+	// bypassPermissions": the session edits files and runs any command
+	// without asking, because headless there is nobody to ask and every
+	// other mode refuses commands outside a read-only allowlist. It is
+	// meant for a sandbox (the worker's pod), which is the boundary. Claude
+	// Code refuses the mode as root; the worker image runs as uid 1000.
 	Args []string
 }
 
@@ -69,7 +72,7 @@ func (c *ClaudeCode) Run(ctx context.Context, req Request) error {
 	}
 	args := c.Args
 	if args == nil {
-		args = []string{"--permission-mode", "acceptEdits"}
+		args = []string{"--permission-mode", "bypassPermissions"}
 	}
 	// The prompt goes in on stdin so it is never parsed as a flag. stream-json
 	// (which needs --verbose with --print) writes each event as a JSON line as
