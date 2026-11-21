@@ -1,0 +1,14 @@
+$ factory doctor
+exit 1
+--- stdout
+pass  server reachable  $SERVER
+pass  token accepted    the server asks for no token: it is unauthenticated, on loopback
+fail  server checks     the server has no doctor endpoint: it is older than this factory (dev)
+        fix:            upgrade the server to this factory's version
+
+Not checked yet, because the feature has not landed:
+  each configured adapter has its secret (adapters: #7, #8)
+  the stored sign-in is valid and its role (sign-in: #15)
+  the telemetry exporter is delivering (telemetry: #13)
+--- stderr
+factory doctor: 1 check(s) failed: server checks. Fix each as shown, then run 'factory doctor' again.

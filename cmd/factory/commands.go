@@ -46,6 +46,7 @@ type streams struct {
 // commands is the command table, in the order help lists it.
 func commands() []command {
 	return []command{
+		doctorCommand(),
 		migrateCommand("down", "Roll back the most recent migration only."),
 		migrateCommand("status", "Print the applied version and each migration as applied or pending."),
 		migrateCommand("up", "Apply every pending migration."),

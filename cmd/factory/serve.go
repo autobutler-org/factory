@@ -14,6 +14,7 @@ import (
 	"github.com/autobutler-org/factory/internal/api"
 	"github.com/autobutler-org/factory/internal/codehost"
 	"github.com/autobutler-org/factory/internal/db"
+	"github.com/autobutler-org/factory/internal/doctor"
 	"github.com/autobutler-org/factory/internal/lease"
 	"github.com/autobutler-org/factory/internal/sandbox"
 	"github.com/autobutler-org/factory/internal/server"
@@ -81,7 +82,7 @@ func serveSetup(fs *flag.FlagSet) runner {
 			fmt.Fprintf(stderr, "factory serve: %v\nRun 'factory serve --help' for usage.\n", err)
 			return 2
 		}
-		mintToken, commitIdentity, err := githubApp(*appID, *appKeyFile, *githubAPI)
+		app, commitIdentity, err := githubApp(*appID, *appKeyFile, *githubAPI)
 		if err != nil {
 			fmt.Fprintf(stderr, "factory serve: %v\n", err)
 			return 1
@@ -116,6 +117,10 @@ func serveSetup(fs *flag.FlagSet) runner {
 			}
 			return db.CheckMigrated(ctx, pool)
 		}
+		var mintToken func(context.Context, string) (codehost.Token, error)
+		if app != nil {
+			mintToken = app.Mint
+		}
 		svc := work.New(pool).WithPolicy(policy)
 		codeHost := githubHost(mintToken, *githubAPI)
 		if codeHost != nil {
@@ -132,7 +137,7 @@ func serveSetup(fs *flag.FlagSet) runner {
 		}
 		apiConfig := api.Config{
 			Work: svc, Ready: ready, Token: token, Logger: logger, MintToken: mintToken, CommitIdentity: commitIdentity,
-			UI: server.UI(server.Public()),
+			UI: server.UI(server.Public()), Version: version, Doctor: serverChecks(ready, app, jobs, svc),
 		}
 		if jobs != nil {
 			// Assigned only when set: a nil *Jobs in the interface would not be nil.
@@ -195,13 +200,46 @@ func serveSetup(fs *flag.FlagSet) runner {
 	}
 }
 
-// githubApp returns the minter of repository tokens for the GitHub App with
+// serverChecks are the server side of factory doctor. app is nil without a
+// GitHub App and jobs nil with the launcher off.
+func serverChecks(ready func(context.Context) error, app *codehost.TokenMinter, jobs *sandbox.Jobs, svc *work.Service) func(context.Context) []doctor.Result {
+	var installations, sandboxes func(context.Context) (int, error)
+	if app != nil {
+		installations = app.Installations
+	}
+	if jobs != nil {
+		sandboxes = func(ctx context.Context) (int, error) {
+			list, err := jobs.List(ctx)
+			return len(list), err
+		}
+	}
+	active := func(ctx context.Context) (int, error) {
+		workers, err := svc.Workers(ctx)
+		n := 0
+		for _, w := range workers {
+			if w.Kind == work.WorkerCluster && w.State == work.WorkerActive {
+				n++
+			}
+		}
+		return n, err
+	}
+	return func(ctx context.Context) []doctor.Result {
+		return []doctor.Result{
+			doctor.Database(ctx, ready),
+			doctor.CodeHost(ctx, installations),
+			doctor.Sandbox(ctx, sandboxes),
+			doctor.Workers(ctx, active),
+		}
+	}
+}
+
+// githubApp returns the GitHub App that mints repository tokens, with
 // appID and the private key in keyFile, and the App bot's commit identity,
 // looked up on first use and then cached. Both are nil when no App is
 // configured, and the identity is nil off github.com, whose noreply domain
 // is the only one it knows. Errors name the file, never its contents.
 func githubApp(appID, keyFile, apiURL string) (
-	mint func(context.Context, string) (codehost.Token, error), identity func(context.Context) (codehost.Identity, error), err error,
+	app *codehost.TokenMinter, identity func(context.Context) (codehost.Identity, error), err error,
 ) {
 	if appID == "" {
 		return nil, nil, nil
@@ -218,7 +256,7 @@ func githubApp(appID, keyFile, apiURL string) (
 	if strings.TrimSuffix(apiURL, "/") == codehost.DefaultGitHubAPI {
 		identity = (&codehost.IdentityCache{Lookup: minter.Identity}).Get
 	}
-	return minter.Mint, identity, nil
+	return &minter, identity, nil
 }
 
 // reap runs the lease reaper, for item and step leases, every interval until

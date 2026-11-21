@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/autobutler-org/factory/internal/codehost"
+	"github.com/autobutler-org/factory/internal/doctor"
 	"github.com/autobutler-org/factory/internal/lease"
 	"github.com/autobutler-org/factory/internal/sandbox"
 	"github.com/autobutler-org/factory/internal/work"
@@ -56,6 +57,12 @@ type Config struct {
 	// token. Nil, or a failed lookup, sends none, and the worker commits as
 	// its built-in factory identity.
 	CommitIdentity func(ctx context.Context) (codehost.Identity, error)
+	// Version is the server's version, which GET /api/v1/admin/doctor
+	// reports so a client can compare it with its own.
+	Version string
+	// Doctor runs the server-side checks GET /api/v1/admin/doctor reports.
+	// Nil reports none.
+	Doctor func(context.Context) []doctor.Result
 	// UI, when set, serves every path outside /api/v1, /healthz and /readyz,
 	// without the token: the web UI asks for the token itself. Nil answers
 	// those paths with a JSON 404.
@@ -105,6 +112,7 @@ func New(cfg Config) http.Handler {
 	v1.HandleFunc("POST /api/v1/workers", h.registerWorker)
 	v1.HandleFunc("GET /api/v1/workers", h.listWorkers)
 	v1.HandleFunc("GET /api/v1/status", h.status)
+	v1.HandleFunc("GET /api/v1/admin/doctor", h.doctor)
 	v1.HandleFunc("POST /api/v1/workers/{id}/heartbeat", h.heartbeat)
 	v1.HandleFunc("POST /api/v1/workers/{id}/claim", h.claimStep)
 	v1.HandleFunc("GET /api/v1/work/{id}/graph", h.graph)
@@ -188,6 +196,16 @@ func (h handlers) authenticate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// doctor is GET /api/v1/admin/doctor: the server's version and its checks.
+// A failing check is still a 200; the checks are the answer.
+func (h handlers) doctor(w http.ResponseWriter, r *http.Request) {
+	checks := []doctor.Result{}
+	if h.cfg.Doctor != nil {
+		checks = append(checks, h.cfg.Doctor(r.Context())...)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": h.cfg.Version, "checks": checks})
 }
 
 func (h handlers) readyz(w http.ResponseWriter, r *http.Request) {

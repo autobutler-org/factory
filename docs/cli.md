@@ -35,6 +35,7 @@ an older server does not have.
 
 | Command | Does |
 | --- | --- |
+| `factory doctor [--worker]` | Check the setup; see below. |
 | `factory migrate up`, `down`, `status` | Apply, roll back one, or report the database migrations. |
 | `factory serve` | Serve the HTTP API and the web UI. |
 | `factory status` | Work counts by state, workers by state, the item waiting in `ready` longest, and the five latest failures (`GET /api/v1/status`). |
@@ -45,6 +46,36 @@ an older server does not have.
 | `factory work show <id>` | One item, its latest step graph, and its event timeline. |
 | `factory worker` | Run the step executor in a worker sandbox. |
 | `factory workers list` | The worker registry: name, kind, state, version, last seen, and what each holds. |
+
+## `factory doctor`
+
+Each check prints `pass`, `fail` or `skip`; a failure prints its fix. A `skip` does not apply here (the sandbox
+runtime with the launcher off, a version that is not a release) and does not fail doctor. Doctor exits 1 when any
+check fails, and its last line names every failing check.
+
+Without `--worker` it checks the server named by `--server` or `FACTORY_SERVER`:
+
+| Check | How |
+| --- | --- |
+| server reachable | `GET /healthz` answers. |
+| token accepted | `GET /api/v1/admin/doctor` accepts `FACTORY_API_TOKEN`. |
+| version compatible | The server's version and this binary's are the same release, or releases with the same major and minor version. A build that is not a release (`dev`, a bare commit) is skipped. |
+| database reachable and migrated | Server side: the readiness check. Behind on migrations offers `factory migrate up`. |
+| code host credential | Server side: the GitHub App authenticates and is installed somewhere (`GET /app/installations`). Fails with no App configured. |
+| sandbox runtime reachable | Server side: the launcher lists its worker Jobs. Skipped with the launcher off. |
+| cluster worker active | Server side: at least one cluster worker is `active`. With the launcher on, a worker starts only when an item is ready, so an idle factory fails this check. |
+
+With `--worker`, run inside a worker image, it checks the machine instead: `git` runs, each agent CLI in
+`--harnesses` is installed and logged in (its model credential; one not ready is skipped while another is, and
+all fail when none is), and `--work-dir` is writable. `--work-dir` and `--harnesses` default to
+`FACTORY_WORK_DIR` and `FACTORY_HARNESSES`, as `factory worker` reads them.
+
+Not checked yet, and listed as such rather than passed: each adapter's secret (#7, #8), the stored sign-in and its
+role (#15), and the telemetry exporter (#13). Each check lands with its feature.
+
+On a terminal, a failed check whose fix is a factory command asks `Run '<command>' now? [Y/n]` and runs it on yes.
+Only the database check has one today, `factory migrate up`, which reads `FACTORY_DATABASE_URL` on this machine.
+A run that is not on a terminal never asks.
 
 ## Tests
 

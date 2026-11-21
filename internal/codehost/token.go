@@ -249,6 +249,28 @@ func (c *IdentityCache) Get(ctx context.Context) (Identity, error) {
 	return id, nil
 }
 
+// Installations returns how many installations the App has. It
+// authenticates as the App, so it proves the App ID and private key are
+// accepted, without minting a token for any repository.
+//
+// ponytail: reads the first page (up to 100) only; nothing needs the exact
+// count past "at least one".
+func (m TokenMinter) Installations(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	jwt, err := m.appJWT(time.Now())
+	if err != nil {
+		return 0, err
+	}
+	var installations []struct {
+		ID int64 `json:"id"`
+	}
+	if err := m.appCall(ctx, jwt, http.MethodGet, "/app/installations?per_page=100", nil, http.StatusOK, &installations); err != nil {
+		return 0, fmt.Errorf("list the GitHub App's installations: %w", err)
+	}
+	return len(installations), nil
+}
+
 // tokenRefreshMargin is how long before its expiry a token is replaced.
 const tokenRefreshMargin = 5 * time.Minute
 

@@ -83,6 +83,8 @@ func (c *client) explain(err error, notFound string) string {
 		return fmt.Sprintf("cannot reach the factory server at %s. Check --server or FACTORY_SERVER, and that the server is running.", c.URL)
 	case !errors.As(err, &apiErr):
 		return err.Error()
+	case apiErr.Code == "":
+		return fmt.Sprintf("the server answered %d with no factory error. Check that --server or FACTORY_SERVER points at a factory server; run 'factory doctor'.", apiErr.Status)
 	case apiErr.Status == http.StatusUnauthorized && os.Getenv(apiTokenEnv) == "":
 		return "the server needs an API token: set FACTORY_API_TOKEN to the token it was started with."
 	case apiErr.Status == http.StatusUnauthorized:
@@ -91,8 +93,6 @@ func (c *client) explain(err error, notFound string) string {
 		return apiErr.Message + ". " + notFound
 	case apiErr.Code == "internal":
 		return fmt.Sprintf("the server failed: check its log for request ID %s, then retry.", apiErr.RequestID)
-	case apiErr.Code == "":
-		return fmt.Sprintf("the server answered %d with no factory error. Check that --server or FACTORY_SERVER points at a factory server; run 'factory doctor'.", apiErr.Status)
 	}
 	return fmt.Sprintf("the server refused: %s (%s). Run 'factory doctor' if the cause is not clear.", apiErr.Message, apiErr.Code)
 }
