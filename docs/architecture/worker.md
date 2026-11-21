@@ -110,7 +110,9 @@ to push, and a review session not to edit, but nothing enforces it.
 - **Agent sessions** see only the base environment (`PATH`, `HOME`, locale, proxy and CA settings) plus `ANTHROPIC_*`,
   `CLAUDE_*` and `XAI_*`. **The gate and git** see only the base environment, with `HOME` and `TMPDIR` pointed at a
   scratch directory for the gate; the model API key never reaches them. Nothing named `FACTORY_*` reaches either.
-- Commits are authored as `factory <factory@users.noreply.github.com>` and are not signed.
+- Commits are authored and committed as `factory <factory@users.noreply.github.com>`. Every commit carries a
+  `Signed-off-by` trailer for that identity (`git commit -s`), always, so a repository that requires sign-off (DCO)
+  accepts the branch. The trailer is not copied into the pull request body. Commits are not GPG signed.
 
 ## Configuration
 

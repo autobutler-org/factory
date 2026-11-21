@@ -178,6 +178,9 @@ func (f *fixture) chain() map[string]any {
 	return results
 }
 
+// wantSignOff is the trailer every commit the worker makes carries.
+const wantSignOff = "Signed-off-by: factory <factory@users.noreply.github.com>"
+
 func TestChainFromWorkspaceToReview(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "gate-ran")
 	f := newFixture(t, "test -f hello.txt && touch "+marker)
@@ -192,8 +195,8 @@ func TestChainFromWorkspaceToReview(t *testing.T) {
 	if head := asMap(t, results[testRepo+"/implement"])["head"]; git(t, bare, "rev-parse", testBranch) != head {
 		t.Errorf("implement pushed %s, result head %v", git(t, bare, "rev-parse", testBranch), head)
 	}
-	if msg := git(t, bare, "log", "-1", "--format=%B", testBranch); msg != "Add hello\n\nAdds hello.txt." {
-		t.Errorf("commit message = %q, want the session's pull request text", msg)
+	if msg := git(t, bare, "log", "-1", "--format=%B", testBranch); msg != "Add hello\n\nAdds hello.txt.\n\n"+wantSignOff {
+		t.Errorf("commit message = %q, want the session's pull request text, signed off", msg)
 	}
 	if prompt := f.agent.Requests[0].Prompt; !strings.Contains(prompt, "https://jira.test/browse/F-1") || !strings.Contains(prompt, "add hello") || strings.Contains(strings.ToLower(prompt), "issue") {
 		t.Errorf("brief = %q, want the item's source and title and no tracker assumption", prompt)
@@ -366,6 +369,9 @@ func TestFixAppliesFindingsOnce(t *testing.T) {
 	bare := filepath.Join(f.origin, testRepo+".git")
 	if git(t, bare, "rev-parse", testBranch) != asMap(t, r.Result)["head"] {
 		t.Error("the fix was not pushed")
+	}
+	if msg := git(t, bare, "log", "-1", "--format=%B", testBranch); msg != "Address the findings of "+testRepo+"/review-1\n\n"+wantSignOff {
+		t.Errorf("fix commit message = %q, want it signed off", msg)
 	}
 	sessions := len(f.agent.Requests)
 	f.e.cfg.WorkDir = t.TempDir()

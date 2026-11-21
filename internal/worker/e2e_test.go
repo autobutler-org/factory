@@ -213,7 +213,7 @@ func (e *env) inReview() {
 		t.Fatalf("pulls %+v, outputs %+v: want one pull request recorded", pulls, outputs)
 	}
 	p := pulls[0]
-	if p.Title != "Add hello" || p.Base != "main" || !strings.Contains(p.Body, "Source: https://jira.test/browse/F-1") || !strings.HasPrefix(p.Head, e.item.ID[:8]) {
+	if p.Title != "Add hello" || p.Base != "main" || !strings.Contains(p.Body, "Source: https://jira.test/browse/F-1") || !strings.HasPrefix(p.Head, e.item.ID[:8]) || strings.Contains(p.Body, "Signed-off-by") {
 		t.Errorf("pull = %+v", p)
 	}
 	if _, err := os.Stat(e.marker); err != nil {

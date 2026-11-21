@@ -31,6 +31,8 @@ const (
 	// gitName and gitEmail author the worker's commits.
 	gitName  = "factory"
 	gitEmail = "factory@users.noreply.github.com"
+	// signOff is the trailer git commit -s adds for that identity.
+	signOff = "Signed-off-by: " + gitName + " <" + gitEmail + ">"
 )
 
 var (
@@ -181,8 +183,9 @@ func (t *tree) config(ctx context.Context) (repoconfig.Config, error) {
 	return repoconfig.Parse(repoconfig.Path+" on "+t.base, []byte(data))
 }
 
-// commit commits whatever is uncommitted with message and reports whether
-// the branch now has commits its base does not.
+// commit commits whatever is uncommitted with message, signed off by the
+// committing identity, and reports whether the branch now has commits its
+// base does not.
 func (t *tree) commit(ctx context.Context, message string) (bool, error) {
 	if _, err := t.git(ctx, t.dir, "add", "-A"); err != nil {
 		return false, err
@@ -192,7 +195,7 @@ func (t *tree) commit(ctx context.Context, message string) (bool, error) {
 		return false, err
 	}
 	if dirty != "" {
-		if _, err := t.git(ctx, t.dir, "-c", "commit.gpgsign=false", "commit", "-q", "-m", message); err != nil {
+		if _, err := t.git(ctx, t.dir, "-c", "commit.gpgsign=false", "commit", "-q", "-s", "-m", message); err != nil {
 			return false, err
 		}
 	}
@@ -236,7 +239,8 @@ func (t *tree) hasSubject(ctx context.Context, subject string) (bool, error) {
 }
 
 // firstMessage is the subject and body of the branch's first commit after
-// the base: the pull request text the implement step committed.
+// the base without its sign-off: the pull request text the implement step
+// committed.
 func (t *tree) firstMessage(ctx context.Context) (subject, body string, err error) {
 	out, err := t.git(ctx, t.dir, "rev-list", "--reverse", t.baseRef()+"..HEAD")
 	if err != nil || out == "" {
@@ -245,7 +249,7 @@ func (t *tree) firstMessage(ctx context.Context) (subject, body string, err erro
 	first, _, _ := strings.Cut(out, "\n")
 	msg, err := t.git(ctx, t.dir, "log", "-1", "--format=%B", first)
 	subject, body, _ = strings.Cut(msg, "\n")
-	return strings.TrimSpace(subject), strings.TrimSpace(body), err
+	return strings.TrimSpace(subject), strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(body), signOff)), err
 }
 
 // head is the commit HEAD points at.
