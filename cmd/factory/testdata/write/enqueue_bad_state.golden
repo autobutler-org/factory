@@ -1,0 +1,6 @@
+$ factory work enqueue --title x --state completed
+exit 2
+--- stdout
+--- stderr
+factory work enqueue: --state "completed": new work starts in design or ready
+Run 'factory work enqueue --help' for usage.

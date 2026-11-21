@@ -1,0 +1,5 @@
+$ factory work enqueue --file /nonexistent/item.json
+exit 1
+--- stdout
+--- stderr
+factory work enqueue: read --file: open /nonexistent/item.json: no such file or directory. Point it at a JSON file, or - for stdin

@@ -1,0 +1,5 @@
+$ factory work move nope ready
+exit 1
+--- stdout
+--- stderr
+factory work move: work item not found. Run 'factory work list' to find an item's ID.

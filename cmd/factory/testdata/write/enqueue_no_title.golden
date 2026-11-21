@@ -1,0 +1,6 @@
+$ factory work enqueue
+exit 2
+--- stdout
+--- stderr
+factory work enqueue: give the item a --title, or pass --file with its JSON
+Run 'factory work enqueue --help' for usage.

@@ -1,0 +1,6 @@
+$ factory work move 0b8c1f9e-0000-4000-8000-000000000002
+exit 2
+--- stdout
+--- stderr
+factory work move: missing <state>
+Run 'factory work move --help' for usage.

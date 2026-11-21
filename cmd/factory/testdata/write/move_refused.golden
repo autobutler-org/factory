@@ -1,0 +1,6 @@
+$ factory work move done completed
+exit 1
+--- stdout
+--- stderr
+factory work move: done cannot move from design to completed. From design it may move to: ready, blocked, wont_fix.
+Run 'factory work move done <state>' with one of those.
