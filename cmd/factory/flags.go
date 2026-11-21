@@ -7,14 +7,10 @@ import (
 	"strings"
 )
 
-// parseFlags parses args into fs, then gives every flag that was not on the
-// command line the value of its FACTORY_<FLAG> environment variable, if set:
-// --stuck-after reads FACTORY_STUCK_AFTER. A flag always wins over the
-// environment.
-func parseFlags(fs *flag.FlagSet, args []string) error {
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+// applyEnv gives every flag that was not on the command line the value of
+// its FACTORY_<FLAG> environment variable, if set: --stuck-after reads
+// FACTORY_STUCK_AFTER. A flag always wins over the environment.
+func applyEnv(fs *flag.FlagSet) error {
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	var err error

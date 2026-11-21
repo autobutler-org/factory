@@ -35,6 +35,7 @@ func TestWorkerJobEnvironmentIsWhatTheWorkerReads(t *testing.T) {
 	if strings.Join(c.Args, " ") != "worker" {
 		t.Errorf("args = %v, want [worker]", c.Args)
 	}
+	fs, _ := workerCommand().flags()
 	for _, e := range c.Env {
 		switch {
 		case e.Name == apiTokenEnv, e.Name == "ANTHROPIC_API_KEY":
@@ -44,7 +45,7 @@ func TestWorkerJobEnvironmentIsWhatTheWorkerReads(t *testing.T) {
 			continue
 		}
 		flagName := strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(e.Name, "FACTORY_"), "_", "-"))
-		if envName(flagName) != e.Name || !strings.Contains(workerUsage, "  --"+flagName+" ") {
+		if envName(flagName) != e.Name || fs.Lookup(flagName) == nil {
 			t.Errorf("the Job sets %s, but factory worker has no --%s flag", e.Name, flagName)
 		}
 	}

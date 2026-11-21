@@ -1,0 +1,11 @@
+$ factory migrate up -h
+exit 0
+--- stdout
+usage: factory migrate up [flags]
+
+Apply every pending migration. The migrations are built into this binary.
+
+Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_DATABASE_URL):
+  --database-url URL
+      Postgres URL
+--- stderr

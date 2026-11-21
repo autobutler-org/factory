@@ -1,0 +1,12 @@
+$ factory migrate --help
+exit 0
+--- stdout
+usage: factory migrate <command>
+
+Commands:
+  migrate down    Roll back the most recent migration only.
+  migrate status  Print the applied version and each migration as applied or pending.
+  migrate up      Apply every pending migration.
+
+Run 'factory migrate <command> --help' for a command's usage.
+--- stderr
