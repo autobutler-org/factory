@@ -11,8 +11,9 @@ import (
 )
 
 // command is one entry of the command table. Dispatch, `factory --help`, each
-// command's usage, and shell completion are all generated from the table and
-// from the flags each command defines, so help cannot drift from behavior.
+// command's usage, and shell completion (completion.go) are all generated
+// from the table and from the flags each command defines, so help cannot
+// drift from behavior.
 type command struct {
 	// name is the words after factory, such as "work list".
 	name string
@@ -46,6 +47,7 @@ type streams struct {
 // commands is the command table, in the order help lists it.
 func commands() []command {
 	return []command{
+		completionCommand(),
 		doctorCommand(),
 		migrateCommand("down", "Roll back the most recent migration only."),
 		migrateCommand("status", "Print the applied version and each migration as applied or pending."),
