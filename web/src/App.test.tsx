@@ -84,7 +84,7 @@ test("links move between pages without reloading", async () => {
   expect(await screen.findByRole("region", { name: "Timeline" })).toBeInTheDocument();
 
   await userEvent.click(screen.getByRole("link", { name: "Workers" }));
-  expect(await screen.findByText("No worker has registered.")).toBeInTheDocument();
+  expect(await screen.findByText(/^No worker has registered\./)).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Workers" })).toHaveAttribute("aria-current", "page");
 });
 

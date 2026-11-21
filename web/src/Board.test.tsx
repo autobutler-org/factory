@@ -74,3 +74,41 @@ test("every request carries the token", async () => {
     expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer t0ken");
   }
 });
+
+test("a column at the limit says only the first items are shown", async () => {
+  mockAPI(routes());
+  renderWithAPI(<Board />);
+  const completed = await screen.findByRole("region", { name: /completed/i });
+  expect(within(completed).getByText("Showing the first 200.")).toBeInTheDocument();
+  const ready = screen.getByRole("region", { name: /ready/i });
+  expect(within(ready).queryByText(/Showing the first/)).not.toBeInTheDocument();
+});
+
+test("empty columns say so, and states read as words", async () => {
+  mockAPI(routes());
+  renderWithAPI(<Board />);
+  const wontFix = await screen.findByRole("region", { name: /won't fix/ });
+  expect(within(wontFix).getByRole("heading", { name: "won't fix 0" })).toBeInTheDocument();
+  expect(within(wontFix).getByText("No work items.")).toBeInTheDocument();
+});
+
+test("a filtered board says what it filters on and clears", async () => {
+  const fetch = mockAPI({ ...routes(), ...routes("&repo=o%2Fr") });
+  renderWithAPI(<Board />);
+  await screen.findByRole("region", { name: /ready/i });
+  expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument();
+
+  await userEvent.type(screen.getByRole("textbox", { name: "Repository" }), "o/r");
+  await userEvent.click(screen.getByRole("button", { name: "Filter" }));
+  expect(await screen.findByText(/Showing only work in o\/r\./)).toBeInTheDocument();
+
+  fetch.mockClear();
+  await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  const repo = screen.getByRole("textbox", { name: "Repository" });
+  expect(repo).toHaveValue("");
+  expect(repo).toHaveFocus();
+  expect(screen.queryByText(/Showing only work/)).not.toBeInTheDocument();
+  await vi.waitFor(() =>
+    expect(fetch).toHaveBeenCalledWith("/api/v1/work?state=ready&limit=200", expect.anything())
+  );
+});

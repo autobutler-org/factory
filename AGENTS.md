@@ -164,6 +164,10 @@ Patterns new UI in `web/` reuses rather than rebuilds:
 - **State** renders through `<State state=...>`, which writes the state out and colors it by `stateRole`
   (`web/src/format.tsx`): danger, warning, success, progress or neutral. A new state goes in that map and its test.
 - **Type**: system fonts only; `code` and `pre` use `--font-mono`; counts and times use `tabular-nums`.
+- **Words**: states and event types go through `label` (`web/src/format.tsx`), which spells them as words; headings
+  set their case in CSS. An empty list says what is missing and, where there is one, how to fill it or the way out
+  (a filtered board offers **Clear filters**). A list that can be long scrolls inside its own box with the next item
+  peeking, so what follows it stays in view.
 - **Preformatted text** that can be long (reasons, logs, JSON) goes in `<Block label=...>`, a named, focusable,
   scrolling region, so a keyboard can scroll it.
 
