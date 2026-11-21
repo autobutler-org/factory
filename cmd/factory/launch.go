@@ -22,51 +22,6 @@ import (
 // launcherInterval is how often the launcher passes.
 const launcherInterval = 10 * time.Second
 
-const launcherUsage = `
-Launcher (starts worker sandboxes as Kubernetes Jobs; needs in-cluster config):
-  --launcher           run the launcher and the server-side steps (default false)
-  --launcher-namespace NS
-                       namespace the worker Jobs run in (default factory-workers)
-  --launcher-image IMAGE
-                       worker image; required with --launcher
-  --launcher-server-url URL
-                       where workers reach this server; required with --launcher
-  --launcher-allowed-images LIST
-                       comma-separated image repository prefixes, such as
-                       ghcr.io/autobutler-org/, a repository's image (image in
-                       .factory/config.toml) may come from; a prefix without a
-                       trailing / is one repository. Empty lets no repository
-                       choose its image (default empty)
-  --launcher-max-sandboxes N
-                       most worker sandboxes alive at once (default 4)
-  --launcher-pending-timeout DURATION
-                       destroy a sandbox still pending after this long (an image
-                       that will not pull, a pod that cannot be scheduled) and
-                       start a new one; 0 never does (default 10m)
-  --launcher-capabilities LIST
-                       comma-separated capabilities the worker image registers;
-                       items requiring others are left alone (default claude-code)
-  --launcher-service-account NAME
-                       ServiceAccount of worker pods (default factory-worker)
-  --launcher-node-selector LIST
-                       key=value,... for worker pods
-  --launcher-tolerations LIST
-                       key=value:Effect or key:Effect,... for worker pods
-  --launcher-requests LIST
-  --launcher-limits LIST
-                       cpu=..,memory=..,ephemeral-storage=.. of the worker
-                       container (defaults cpu=1,memory=2Gi,ephemeral-storage=10Gi
-                       and cpu=4,memory=8Gi,ephemeral-storage=20Gi)
-  --launcher-api-token-secret NAME
-                       Secret in the worker namespace whose key "token" is given
-                       to workers as FACTORY_API_TOKEN (default factory-worker-api-token)
-  --launcher-model-key-secret NAME
-                       Secret in the worker namespace whose key "api-key" is given
-                       to workers as ANTHROPIC_API_KEY (default factory-model-api-key)
-  --launcher-runtime-class NAME
-                       RuntimeClass of worker pods, such as gvisor (default none)
-`
-
 // launcherFlags are factory serve's launcher settings, as parsed.
 type launcherFlags struct {
 	enabled                                   *bool
@@ -82,22 +37,22 @@ type launcherFlags struct {
 
 func addLauncherFlags(fs *flag.FlagSet) launcherFlags {
 	return launcherFlags{
-		enabled:        fs.Bool("launcher", false, ""),
-		namespace:      fs.String("launcher-namespace", "factory-workers", ""),
-		image:          fs.String("launcher-image", "", ""),
-		serverURL:      fs.String("launcher-server-url", "", ""),
-		allowedImages:  fs.String("launcher-allowed-images", "", ""),
-		maxSandboxes:   fs.Int("launcher-max-sandboxes", 4, ""),
-		pendingTimeout: fs.Duration("launcher-pending-timeout", 10*time.Minute, ""),
-		capabilities:   fs.String("launcher-capabilities", "claude-code", ""),
-		serviceAccount: fs.String("launcher-service-account", "factory-worker", ""),
-		nodeSelector:   fs.String("launcher-node-selector", "", ""),
-		tolerations:    fs.String("launcher-tolerations", "", ""),
-		requests:       fs.String("launcher-requests", "cpu=1,memory=2Gi,ephemeral-storage=10Gi", ""),
-		limits:         fs.String("launcher-limits", "cpu=4,memory=8Gi,ephemeral-storage=20Gi", ""),
-		apiTokenSecret: fs.String("launcher-api-token-secret", "factory-worker-api-token", ""),
-		modelKeySecret: fs.String("launcher-model-key-secret", "factory-model-api-key", ""),
-		runtimeCl:      fs.String("launcher-runtime-class", "", ""),
+		enabled:        fs.Bool("launcher", false, "run the launcher and the server-side steps"),
+		namespace:      fs.String("launcher-namespace", "factory-workers", "`namespace` the worker Jobs run in"),
+		image:          fs.String("launcher-image", "", "worker `image`; required with --launcher"),
+		serverURL:      fs.String("launcher-server-url", "", "`URL` workers reach this server at; required with --launcher"),
+		allowedImages:  fs.String("launcher-allowed-images", "", "comma-separated image repository prefixes, such as ghcr.io/autobutler-org/, a repository's image (image in .factory/config.toml) may come from; a prefix without a trailing / is one repository. Empty lets no repository choose its image"),
+		maxSandboxes:   fs.Int("launcher-max-sandboxes", 4, "most worker sandboxes alive at once"),
+		pendingTimeout: fs.Duration("launcher-pending-timeout", 10*time.Minute, "destroy a sandbox still pending after this long (an image that will not pull, a pod that cannot be scheduled) and start a new one; 0 never does"),
+		capabilities:   fs.String("launcher-capabilities", "claude-code", "comma-separated capabilities the worker image registers; items requiring others are left alone"),
+		serviceAccount: fs.String("launcher-service-account", "factory-worker", "ServiceAccount `name` of worker pods"),
+		nodeSelector:   fs.String("launcher-node-selector", "", "key=value,... node selector for worker pods"),
+		tolerations:    fs.String("launcher-tolerations", "", "key=value:Effect or key:Effect,... tolerations for worker pods"),
+		requests:       fs.String("launcher-requests", "cpu=1,memory=2Gi,ephemeral-storage=10Gi", "cpu, memory and ephemeral-storage requests of the worker container"),
+		limits:         fs.String("launcher-limits", "cpu=4,memory=8Gi,ephemeral-storage=20Gi", "cpu, memory and ephemeral-storage limits of the worker container"),
+		apiTokenSecret: fs.String("launcher-api-token-secret", "factory-worker-api-token", "Secret `name` in the worker namespace whose key \"token\" is given to workers as FACTORY_API_TOKEN"),
+		modelKeySecret: fs.String("launcher-model-key-secret", "factory-model-api-key", "Secret `name` in the worker namespace whose key \"api-key\" is given to workers as ANTHROPIC_API_KEY"),
+		runtimeCl:      fs.String("launcher-runtime-class", "", "RuntimeClass `name` of worker pods, such as gvisor"),
 	}
 }
 

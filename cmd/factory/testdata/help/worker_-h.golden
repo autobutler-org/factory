@@ -1,0 +1,33 @@
+$ factory worker -h
+exit 0
+--- stdout
+usage: factory worker [flags]
+
+Run the step executor: register with the factory server, claim steps one at a
+time, run each, and report the result. Exits 0 when the server has nothing
+left to hand out. On SIGTERM the step in hand is released, which counts no
+attempt.
+
+Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_GIT_URL):
+  --git-url URL
+      base URL of clone URLs, <git-url>/<owner>/<repo>.git (default
+      https://github.com)
+  --github-api-url URL
+      GitHub REST API base URL (default https://api.github.com)
+  --harnesses STRING
+      agent CLIs to use, in order; those not installed or not logged in are
+      skipped (default claude-code,grok)
+  --sandbox NAME
+      the worker's name, the sandbox it runs in (default: the host name)
+  --sandbox-key STRING
+      claim only this chain's steps (<item id>/<owner>/<repo>)
+  --token-file FILE
+      file holding the bearer token, read on every request
+  --url URL
+      the factory server URL (required)
+  --work-dir DIRECTORY
+      directory where checkouts live (default $TMPDIR/factory-worker)
+
+Environment:
+  FACTORY_API_TOKEN    bearer token when --token-file is not set
+--- stderr

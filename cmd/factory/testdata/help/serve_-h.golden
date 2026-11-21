@@ -1,0 +1,79 @@
+$ factory serve -h
+exit 0
+--- stdout
+usage: factory serve [flags]
+
+Serve the HTTP API until interrupted, then shut down gracefully.
+Refuses to start against a database that is behind this binary's migrations.
+The --launcher flags start worker sandboxes as Kubernetes Jobs and need
+in-cluster config.
+
+Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_ADDR):
+  --addr ADDRESS
+      listen address (default 127.0.0.1:8080)
+  --database-url URL
+      Postgres URL
+  --github-api-url URL
+      GitHub REST API base URL (default https://api.github.com)
+  --github-app-id ID
+      GitHub App ID that mints workers' repository tokens; set it with
+      --github-app-key-file, or leave both unset
+  --github-app-key-file FILE
+      the GitHub App's PEM private key file
+  --launcher
+      run the launcher and the server-side steps
+  --launcher-allowed-images STRING
+      comma-separated image repository prefixes, such as
+      ghcr.io/autobutler-org/, a repository's image (image in
+      .factory/config.toml) may come from; a prefix without a trailing / is
+      one repository. Empty lets no repository choose its image
+  --launcher-api-token-secret NAME
+      Secret name in the worker namespace whose key "token" is given to
+      workers as FACTORY_API_TOKEN (default factory-worker-api-token)
+  --launcher-capabilities STRING
+      comma-separated capabilities the worker image registers; items requiring
+      others are left alone (default claude-code)
+  --launcher-image IMAGE
+      worker image; required with --launcher
+  --launcher-limits STRING
+      cpu, memory and ephemeral-storage limits of the worker container
+      (default cpu=4,memory=8Gi,ephemeral-storage=20Gi)
+  --launcher-max-sandboxes INT
+      most worker sandboxes alive at once (default 4)
+  --launcher-model-key-secret NAME
+      Secret name in the worker namespace whose key "api-key" is given to
+      workers as ANTHROPIC_API_KEY (default factory-model-api-key)
+  --launcher-namespace NAMESPACE
+      namespace the worker Jobs run in (default factory-workers)
+  --launcher-node-selector STRING
+      key=value,... node selector for worker pods
+  --launcher-pending-timeout DURATION
+      destroy a sandbox still pending after this long (an image that will not
+      pull, a pod that cannot be scheduled) and start a new one; 0 never does
+      (default 10m0s)
+  --launcher-requests STRING
+      cpu, memory and ephemeral-storage requests of the worker container
+      (default cpu=1,memory=2Gi,ephemeral-storage=10Gi)
+  --launcher-runtime-class NAME
+      RuntimeClass name of worker pods, such as gvisor
+  --launcher-server-url URL
+      URL workers reach this server at; required with --launcher
+  --launcher-service-account NAME
+      ServiceAccount name of worker pods (default factory-worker)
+  --launcher-tolerations STRING
+      key=value:Effect or key:Effect,... tolerations for worker pods
+  --lease DURATION
+      how long a claim lasts without a heartbeat; a worker silent this long is
+      marked gone (default 5m0s)
+  --max-attempts INT
+      failed attempts before a step or item is failed (default 3)
+  --retry-delay DURATION
+      wait before handing out a retried step or item (default 1m0s)
+  --stuck-after DURATION
+      revoke a claim with no stage report for this long and count an attempt
+      (default 3h0m0s)
+
+Environment:
+  FACTORY_API_TOKEN    bearer token required on /api/v1. When unset the API is
+                       unauthenticated and --addr must be a loopback address.
+--- stderr

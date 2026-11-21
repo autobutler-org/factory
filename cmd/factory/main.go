@@ -1,15 +1,18 @@
 // Command factory is the autobutler-org software factory. It parses arguments,
-// dispatches to a subcommand, and turns the result into an exit code: 0 on
+// dispatches to a subcommand from the command table (commands.go), which all
+// usage text is generated from, and turns the result into an exit code: 0 on
 // success, 2 for a usage error, 1 for a runtime failure. It holds no business
-// logic; that lives in internal/ packages.
+// logic; that lives in internal/ packages. docs/cli.md has the conventions.
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
@@ -22,65 +25,36 @@ var (
 	date    = "unknown"
 )
 
-const usage = `factory is the autobutler-org software factory.
-
-Usage:
-  factory <command> [arguments]
-  factory [-h | --help]
-
-Commands:
-  migrate     Apply, roll back, or report the database migrations.
-  serve       Serve the HTTP API.
-  version     Print the version stamped into this binary.
-  worker      Run the step executor in a worker sandbox.
-
-Run 'factory <command> --help' for a command's usage.
-`
-
-const versionUsage = `usage: factory version
-
-Print the version, commit, and build date stamped into this binary.
-An unstamped build reports dev.
-`
-
+// run runs the command args name, with no input and no terminal: tests and
+// scripts see only what a non-interactive run does.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
-		return 2
-	}
-	switch args[0] {
-	case "-h", "--help":
-		fmt.Fprint(stdout, usage)
-		return 0
-	case "migrate":
-		return migrateMain(ctx, args[1:], stdout, stderr)
-	case "serve":
-		return serveMain(ctx, args[1:], stdout, stderr)
-	case "version":
-		return versionMain(args[1:], stdout, stderr)
-	case "worker":
-		return workerMain(ctx, args[1:], stdout, stderr)
-	}
-	fmt.Fprintf(stderr, "factory: unknown command %q\nRun 'factory --help' for usage.\n", args[0])
-	return 2
+	return dispatch(ctx, args, streams{in: strings.NewReader(""), out: stdout, err: stderr})
 }
 
-func versionMain(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
-		fmt.Fprint(stdout, versionUsage)
-		return 0
+func versionCommand() command {
+	return command{
+		name:    "version",
+		summary: "Print the version stamped into this binary.",
+		about: `Print the version, commit, and build date stamped into this binary.
+An unstamped build reports dev.`,
+		setup: func(*flag.FlagSet) runner {
+			return func(_ context.Context, _ []string, s streams) int {
+				fmt.Fprintf(s.out, "factory %s (commit %s, built %s)\n", version, commit, date)
+				return 0
+			}
+		},
 	}
-	if len(args) != 0 {
-		fmt.Fprintf(stderr, "factory version: takes no arguments\n%s", versionUsage)
-		return 2
-	}
-	fmt.Fprintf(stdout, "factory %s (commit %s, built %s)\n", version, commit, date)
-	return 0
 }
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	code := dispatch(ctx, os.Args[1:], streams{in: os.Stdin, out: os.Stdout, err: os.Stderr, interactive: isTerminal(os.Stdin) && isTerminal(os.Stdout)})
 	stop()
 	os.Exit(code)
+}
+
+// isTerminal reports whether f is a character device, such as a terminal.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }

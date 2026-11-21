@@ -1,0 +1,6 @@
+$ factory migrate sideways
+exit 2
+--- stdout
+--- stderr
+factory: unknown command "migrate sideways"
+Run 'factory migrate --help' for its commands.

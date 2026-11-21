@@ -1,0 +1,19 @@
+$ factory --help
+exit 0
+--- stdout
+factory is the autobutler-org software factory.
+
+Usage:
+  factory <command> [arguments]
+  factory [-h | --help]
+
+Commands:
+  migrate down    Roll back the most recent migration only.
+  migrate status  Print the applied version and each migration as applied or pending.
+  migrate up      Apply every pending migration.
+  serve           Serve the HTTP API and the web UI.
+  version         Print the version stamped into this binary.
+  worker          Run the step executor in a worker sandbox.
+
+Run 'factory <command> --help' for a command's usage.
+--- stderr

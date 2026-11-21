@@ -1,0 +1,8 @@
+$ factory version -h
+exit 0
+--- stdout
+usage: factory version
+
+Print the version, commit, and build date stamped into this binary.
+An unstamped build reports dev.
+--- stderr

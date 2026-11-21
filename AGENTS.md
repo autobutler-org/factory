@@ -10,7 +10,8 @@ Postgres, hands it to agent workers in our Kubernetes cluster, and shows what is
 ## Layout
 
 ```text
-cmd/factory/        the binary: parses arguments, dispatches subcommands, maps errors to exit codes
+cmd/factory/        the binary: the command table (commands.go) that dispatch and all usage text come from, each
+                    subcommand, exit codes; testdata/ holds the golden help and output files (docs/cli.md)
 internal/           business logic, one package per concern; no package needs HTTP or CLI context
 internal/db/        pgx pool, embedded golang-migrate migrations (migrations/), sqlc output (generated)
 internal/db/dbtest/ NewDB(t): a Postgres schema per test with the real migrations applied
@@ -20,6 +21,7 @@ internal/plan/      the pure planner: work item to step graph, and which step ma
 internal/api/       the HTTP API handlers and middleware (docs/api.md); no SQL, no state rules
 internal/codehost/  the code host (GitHub): pull requests, checks, merge, App tokens; codehost.Fake and fakegh/ for tests (#10)
 internal/sandbox/   starts, tracks, and destroys worker sandboxes (Kubernetes Jobs), execs into them (#9), reads their logs (#50)
+internal/apiclient/ the HTTP client of the factory API that the worker and the CLI share; errors as *apiclient.Error
 internal/worker/    the step executor `factory worker` runs: protocol client, heartbeat, and each step kind (#11)
 internal/harness/   drives agent CLIs (Claude Code, Grok) for a session; harness.Fake for tests
 internal/repoconfig/ parses a repository's .factory/config.toml
@@ -33,7 +35,7 @@ compose.yaml        the development Postgres, on loopback
 Dockerfile          the server image (distroless, non-root); Dockerfile.worker is the agent dev container
 deploy/chart/       the Helm chart; values-autobutler.yaml matches our cluster (docs/operations.md)
 web/                the web UI (React, Vite, TypeScript; Vitest, ESLint, Prettier), built into internal/server/public (#14)
-docs/               api.md, config.md, operations.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols, worker HTTP contract and the launcher; worker.md: what `factory worker` does per step kind; codehost.md: the code host and its tokens)
+docs/               api.md, cli.md (CLI conventions and commands), config.md, operations.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols, worker HTTP contract and the launcher; worker.md: what `factory worker` does per step kind; codehost.md: the code host and its tokens)
 build/              build output (./build/factory); not source
 .claude/skills/     interface design skills vendored from schmeide/template (MIT; LICENSE and UPSTREAM_COMMIT inside)
 .github/workflows/  ci.yml (build, race tests, test-db and e2e on Postgres, web), check.yml (make check/go,
@@ -58,6 +60,7 @@ comment so `make help` lists it.
 | `make test`      | `go test ./...`                                                               |
 | `make test/race` | the tests under the race detector, as CI runs them                            |
 | `make test/e2e`  | the worker's end-to-end tests (build tag `e2e`) against Postgres              |
+| `make test/golden` | rewrites the CLI's golden files in `cmd/factory/testdata` from current output |
 | `make check`     | `check/go` (`check/format`, `check/tidy`, `check/lint`, `check/sqlc`, `check/migrations`, `test`), `check/web` (ESLint, `tsc`, Prettier), then `test/web`; changes no files |
 | `make format`    | `golangci-lint fmt` (gci, gofumpt, goimports); rewrites files                 |
 | `make fix`       | applies lint autofixes, then formats                                          |
@@ -82,9 +85,10 @@ comment so `make help` lists it.
   linter and give a reason.
 - Handlers and `main` only parse input, call a service function, and shape the output. Business logic lives in
   `internal/` packages that need no HTTP or CLI context and are tested without it.
-- Each command's dispatch takes its arguments and output writers, parses flags with the standard `flag` package
-  (no cobra, no viper), and returns an exit code: `0` success, `2` usage error, `1` runtime failure. Error text
-  says what to do next, for example `Run 'factory --help' for usage.`
+- Each command is an entry in the command table in `cmd/factory/commands.go`: it defines its flags, with their help
+  text, on a standard `flag` package FlagSet (no cobra, no viper) and returns an exit code: `0` success, `2` usage
+  error, `1` runtime failure. Usage text is generated from the table; never write it by hand. Error text says what
+  to do next, for example `Run 'factory --help' for usage.` [docs/cli.md](docs/cli.md) has the conventions.
 - Every package has a package doc comment that says what it does and what it does not do. When a package's
   behavior changes, its doc changes in the same pull request.
 - Wrap errors with context: `fmt.Errorf("...: %w", err)`. Sentinel errors are `var Err... = errors.New(...)`
