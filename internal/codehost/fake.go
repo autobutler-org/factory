@@ -35,6 +35,12 @@ type Fake struct {
 	// when set, is the error every ReadFile returns, as in an outage.
 	Files   map[string]string
 	ReadErr error
+	// HeadChecks are the checks PullStatus reports, by the pull request's
+	// Head.Sha, so a new head has none of its predecessor's. Required are the
+	// required check names, and Approved the approved pull request numbers.
+	HeadChecks map[string][]Check
+	Required   []string
+	Approved   []int
 
 	mu       sync.Mutex
 	comments map[int][]string
@@ -174,4 +180,25 @@ func (f *Fake) ReadFile(_ context.Context, _, path string) (File, error) {
 		return File{}, fmt.Errorf("%s: %w", path, ErrFileNotFound)
 	}
 	return File{Content: []byte(content), Commit: FakeCommit}, nil
+}
+
+// PullStatus reads Pulls[number-1] with HeadChecks of its head.
+func (f *Fake) PullStatus(_ context.Context, number int) (PullStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if number < 1 || number > len(f.Pulls) {
+		return PullStatus{}, fmt.Errorf("no pull request %d", number)
+	}
+	p := f.Pulls[number-1]
+	st := PullStatus{
+		State: PullOpen, Head: p.Head.Sha, Approved: slices.Contains(f.Approved, number),
+		Required: slices.Clone(f.Required), Checks: slices.Clone(f.HeadChecks[p.Head.Sha]),
+	}
+	switch {
+	case p.MergedAt != "":
+		st.State = PullMerged
+	case p.State == "closed":
+		st.State = PullClosed
+	}
+	return st, nil
 }

@@ -1,8 +1,8 @@
 // Package fakegh is a stateful fake of the GitHub REST endpoints a worker
 // calls for one repository: the repository, pulls (list, create, retarget,
 // merge), pull request comments, check runs and their Actions job logs,
-// branch protection, a branch's head commit and file contents, token revocation, and a fixed GraphQL answer for the
-// merge queue. List endpoints honor per_page and page. Merge can be told to
+// branch protection, a branch's head commit and file contents, token revocation, and one GraphQL answer for the
+// merge queue and a pull request's status (state, review decision, and the check runs on HeadSHA). List endpoints honor per_page and page. Merge can be told to
 // fail the way GitHub does. Accept adds tokens that expire, and an expired
 // token gets GitHub's 401 Bad credentials.
 //
@@ -88,6 +88,8 @@ type Server struct {
 	revokeStatus int
 	// files are the repository's files by path, at HeadSHA.
 	files map[string]string
+	// approved are the approved pull request numbers.
+	approved []int
 }
 
 // New starts a fake for repo ("owner/name") that accepts only token. It is
@@ -149,7 +151,7 @@ func (p Pull) reply() map[string]any {
 		"merged":     p.Merged,
 		"merged_at":  mergedAt,
 		"created_at": time.Date(2026, 1, 1, 0, 0, p.Number, 0, time.UTC).Format(time.RFC3339),
-		"head":       map[string]string{"ref": p.Head},
+		"head":       map[string]string{"ref": p.Head, "sha": HeadSHA},
 		"base":       map[string]string{"ref": p.Base},
 	}
 }
@@ -180,12 +182,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost && r.URL.Path == "/graphql" {
-		// ponytail: every GraphQL query gets one answer, a pull request on
-		// main whose branch has no merge queue.
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{
-			"pullRequest": map[string]string{"id": "PR_1", "baseRefName": "main"},
-			"mergeQueue":  nil,
-		}}})
+		s.graphql(w, r)
 		return
 	}
 	path, ok := strings.CutPrefix(r.URL.Path, "/repos/"+s.repo)
@@ -241,6 +238,53 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.unexpected(w, r)
 	}
+}
+
+// graphql gives every query one answer, which holds what each query the
+// client sends reads: the pull request the variables name, on main, whose
+// branch has no merge queue (QueuedPull), with its state, review decision,
+// no required checks, and the check runs SetChecks set on HeadSHA
+// (PullStatus).
+func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Variables struct {
+			Number int `json:"number"`
+		} `json:"variables"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	state := "OPEN"
+	if p := s.pull(strconv.Itoa(in.Variables.Number)); p != nil {
+		switch {
+		case p.Merged:
+			state = "MERGED"
+		case p.State == "closed":
+			state = "CLOSED"
+		}
+	}
+	var decision any
+	if slices.Contains(s.approved, in.Variables.Number) {
+		decision = "APPROVED"
+	}
+	contexts := make([]map[string]any, 0, len(s.checks))
+	for _, c := range s.checks {
+		var conclusion any
+		if c.Conclusion != "" {
+			conclusion = strings.ToUpper(c.Conclusion)
+		}
+		contexts = append(contexts, map[string]any{"__typename": "CheckRun", "name": c.Name, "status": strings.ToUpper(c.Status), "conclusion": conclusion})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{
+		"pullRequest": map[string]any{
+			"id": "PR_1", "baseRefName": "main", "state": state, "reviewDecision": decision,
+			"latestOpinionatedReviews": map[string]any{"nodes": []any{}},
+			"baseRef":                  map[string]any{"branchProtectionRule": nil, "rules": map[string]any{"nodes": []any{}}},
+			"commits": map[string]any{"nodes": []any{map[string]any{"commit": map[string]any{
+				"oid": HeadSHA, "committedDate": "2026-01-01T00:00:00Z",
+				"statusCheckRollup": map[string]any{"contexts": map[string]any{"nodes": contexts}},
+			}}}},
+		},
+		"mergeQueue": nil,
+	}}})
 }
 
 func (s *Server) unexpected(w http.ResponseWriter, r *http.Request) {
@@ -413,6 +457,23 @@ func (s *Server) Protect(branch string, approvals int) {
 		s.approvals = map[string]int{}
 	}
 	s.approvals[branch] = approvals
+}
+
+// Approve makes the review decision of pull request number APPROVED.
+func (s *Server) Approve(number int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.approved = append(s.approved, number)
+}
+
+// ClosePull closes pull request number without merging it, as a person
+// does.
+func (s *Server) ClosePull(number int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p := s.pull(strconv.Itoa(number)); p != nil {
+		p.State = "closed"
+	}
 }
 
 // SeedPull stores p as if it had been opened, and returns it numbered.
