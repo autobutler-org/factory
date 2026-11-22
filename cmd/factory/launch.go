@@ -30,15 +30,15 @@ const checksGrace = 2 * time.Minute
 
 // launcherFlags are factory serve's launcher settings, as parsed.
 type launcherFlags struct {
-	enabled                                   *bool
-	namespace, image, serverURL               *string
-	allowedImages                             *string
-	maxSandboxes                              *int
-	pendingTimeout, pollInterval              *time.Duration
-	capabilities, serviceAccount              *string
-	nodeSelector, tolerations                 *string
-	requests, limits                          *string
-	apiTokenSecret, modelKeySecret, runtimeCl *string
+	enabled                      *bool
+	namespace, image, serverURL  *string
+	allowedImages                *string
+	maxSandboxes                 *int
+	pendingTimeout, pollInterval *time.Duration
+	capabilities, serviceAccount *string
+	nodeSelector, tolerations    *string
+	requests, limits             *string
+	modelKeySecret, runtimeCl    *string
 }
 
 func addLauncherFlags(fs *flag.FlagSet) launcherFlags {
@@ -57,7 +57,6 @@ func addLauncherFlags(fs *flag.FlagSet) launcherFlags {
 		tolerations:    fs.String("launcher-tolerations", "", "key=value:Effect or key:Effect,... tolerations for worker pods"),
 		requests:       fs.String("launcher-requests", "cpu=1,memory=2Gi,ephemeral-storage=10Gi", "cpu, memory and ephemeral-storage requests of the worker container"),
 		limits:         fs.String("launcher-limits", "cpu=4,memory=8Gi,ephemeral-storage=20Gi", "cpu, memory and ephemeral-storage limits of the worker container"),
-		apiTokenSecret: fs.String("launcher-api-token-secret", "factory-worker-api-token", "Secret `name` in the worker namespace whose key \"token\" is given to workers as FACTORY_API_TOKEN"),
 		modelKeySecret: fs.String("launcher-model-key-secret", "factory-model-api-key", "Secret `name` in the worker namespace whose key \"api-key\" is given to workers as ANTHROPIC_API_KEY"),
 		runtimeCl:      fs.String("launcher-runtime-class", "", "RuntimeClass `name` of worker pods, such as gvisor"),
 	}
@@ -105,7 +104,6 @@ func (f launcherFlags) jobsConfig() (sandbox.JobsConfig, error) {
 		NodeSelector:       nodeSelector,
 		Tolerations:        tolerations,
 		Resources:          corev1.ResourceRequirements{Requests: requests, Limits: limits},
-		APITokenSecret:     *f.apiTokenSecret,
 		ModelKeySecret:     *f.modelKeySecret,
 	}, nil
 }

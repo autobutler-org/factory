@@ -26,8 +26,8 @@ type Client struct {
 	// URL is the server's base URL, such as http://factory:8080.
 	URL string
 	// Token returns the bearer token for one request, or "" for none. It is
-	// called for every request, so a token file the kubelet refreshes is
-	// read fresh.
+	// called for every request until the worker registers; with a credential
+	// from registration the worker uses that instead.
 	Token func() (string, error)
 	// HTTP is the client to use; nil means http.DefaultClient.
 	HTTP *http.Client
@@ -95,16 +95,19 @@ func (c *Client) call(ctx context.Context, method, path string, in, out any) (ok
 }
 
 // Register registers the worker as a cluster worker named name and returns
-// its ID. The same name gets the same ID back.
-func (c *Client) Register(ctx context.Context, name, version string, harnesses []string) (string, error) {
+// its ID. The same name gets the same ID back. A server with workload
+// identity on also returns the worker's credential, once: the bearer token
+// for every later call, in place of the pod's token.
+func (c *Client) Register(ctx context.Context, name, version string, harnesses []string) (id, credential string, err error) {
 	in := map[string]any{"name": name, "kind": "cluster", "version": version, "capabilities": map[string]any{"harnesses": harnesses}}
 	var w struct {
-		ID string `json:"id"`
+		ID         string `json:"id"`
+		Credential string `json:"credential"`
 	}
 	if _, err := c.call(ctx, http.MethodPost, "/api/v1/workers", in, &w); err != nil {
-		return "", fmt.Errorf("register: %w", err)
+		return "", "", fmt.Errorf("register: %w", err)
 	}
-	return w.ID, nil
+	return w.ID, w.Credential, nil
 }
 
 // Heartbeat extends the worker's leases and returns the IDs it still holds

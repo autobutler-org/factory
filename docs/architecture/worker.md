@@ -94,15 +94,20 @@ token goes to git per command and never into the session's environment or git co
 session has nothing to authenticate with. Nothing a session does is pushed except by the worker, after the gate
 passes and the secret scan finds nothing, and a review session's changes are discarded.
 
-The session runs as the same user as the worker, though, so a session that goes looking can read the worker's
-environment through `/proc` and its factory API token at `/var/run/factory/token`, and call the factory API as
-the worker, including for a code host token for the repository its chain covers. The prompts tell a session not
-to push, and a review session not to edit, but nothing enforces it.
+The pod holds no shared API token any more: the worker registers with its pod's ServiceAccount token, once, and
+the server binds the credential it answers with to this worker and this chain
+([workload identity](workers.md#workload-identity)), so nothing in the sandbox can act on another item. The token
+file is spent after registration. The session still runs as the same user as the worker, though, so a session that
+goes looking can read the worker's memory through `/proc/<pid>/mem`, or a git child's environment while it pushes,
+and act as the worker on its own chain, including asking for a code host token for its repository. The prompts tell
+a session not to push, and a review session not to edit; #48 closes the rest.
 
 ## Credentials and environment
 
-- **Factory API:** the bearer token is read from `--token-file` on every request (the kubelet rotates a projected
-  token), or from `FACTORY_API_TOKEN`.
+- **Factory API:** in a Job, the worker registers with the projected ServiceAccount token in `--token-file`
+  (`FACTORY_TOKEN_FILE`, `/var/run/factory/token`), once, and sends the credential the server answers with on every
+  later call; the credential is held only in memory. Outside Kubernetes, against a server without the launcher, it
+  sends `FACTORY_API_TOKEN` instead.
 - **Code host:** each step asks `POST /api/v1/work/{id}/codehost-token` for its repository and keeps the token fresh
   with `codehost.RefreshingToken`. git receives it per command as an `http.extraHeader` in the environment
   (`GIT_CONFIG_COUNT`), so it is never written to git config, disk, or logs, and never passed to a session. The

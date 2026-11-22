@@ -99,3 +99,21 @@ JOIN work_graphs g ON g.id = s.graph_id
 JOIN work_items w ON w.id = g.work_item_id
 WHERE s.state = 'running' AND s.claimed_by IS NOT NULL
 ORDER BY s.started_at, s.id;
+
+-- name: BindWorkerCredential :one
+-- Binds a worker to the pod it runs in, with a new credential. A pod binds
+-- once: the same pod uid again changes nothing and returns no row.
+INSERT INTO worker_credentials (worker_id, pod_uid, sandbox_key, credential_hash)
+VALUES (@worker_id, @pod_uid, @sandbox_key, @credential_hash)
+ON CONFLICT (worker_id) DO UPDATE
+SET pod_uid = EXCLUDED.pod_uid, sandbox_key = EXCLUDED.sandbox_key,
+    credential_hash = EXCLUDED.credential_hash, created_at = now()
+WHERE worker_credentials.pod_uid <> EXCLUDED.pod_uid
+RETURNING worker_id;
+
+-- name: WorkerByCredential :one
+-- The worker a credential belongs to. A worker marked gone has lost it.
+SELECT c.worker_id, c.sandbox_key
+FROM worker_credentials c
+JOIN workers w ON w.id = c.worker_id
+WHERE c.credential_hash = @credential_hash AND w.state <> 'gone';

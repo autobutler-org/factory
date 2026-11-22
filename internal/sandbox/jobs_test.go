@@ -30,7 +30,6 @@ var testConfig = JobsConfig{
 		Requests: corev1.ResourceList{corev1.ResourceEphemeralStorage: resource.MustParse("10Gi")},
 		Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Gi")},
 	},
-	APITokenSecret: "factory-worker-api-token",
 	ModelKeySecret: "factory-model-api-key",
 }
 
@@ -148,13 +147,17 @@ func TestJobsEnsureCreatesWorkerJob(t *testing.T) {
 		"FACTORY_SANDBOX_KEY": "item-1/o/r",
 		"FACTORY_WORK_DIR":    WorkspaceDir,
 		"FACTORY_HARNESSES":   "claude-code",
-		"FACTORY_TOKEN_FILE":  "",
-		"FACTORY_API_TOKEN":   "secret:factory-worker-api-token/token",
+		"FACTORY_TOKEN_FILE":  tokenDir + "/" + tokenFile,
 		"ANTHROPIC_API_KEY":   "secret:factory-model-api-key/api-key",
 	} {
 		if env[k] != want {
 			t.Errorf("env %s = %q, want %q", k, env[k], want)
 		}
+	}
+	// The worker authenticates as its pod; the shared API token people use
+	// must not be in the pod at all.
+	if v, ok := env["FACTORY_API_TOKEN"]; ok {
+		t.Errorf("env FACTORY_API_TOKEN = %q, want it unset", v)
 	}
 	if job.Annotations[annotationKey] != "item-1/o/r" {
 		t.Errorf("annotations = %v, want the sandbox key under %s", job.Annotations, annotationKey)

@@ -112,3 +112,11 @@ type Worker struct {
 	LastSeenAt   time.Time       `json:"last_seen_at"`
 	State        string          `json:"state"`
 }
+
+type WorkerCredential struct {
+	WorkerID       string    `json:"worker_id"`
+	PodUid         string    `json:"pod_uid"`
+	SandboxKey     string    `json:"sandbox_key"`
+	CredentialHash []byte    `json:"credential_hash"`
+	CreatedAt      time.Time `json:"created_at"`
+}

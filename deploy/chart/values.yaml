@@ -147,11 +147,10 @@ workers:
     repository: ghcr.io/autobutler-org/factory-worker
     tag: ""
     digest: ""
-  # Created by the chart with no RoleBindings and no automounted token.
+  # Created by the chart with no RoleBindings and no automounted token. A worker pod authenticates to the server
+  # with a projected token of this ServiceAccount (audience factory), which the server verifies with a TokenReview.
   serviceAccountName: factory-worker
-  # Secrets in the worker namespace, created by a human.
-  # Key `token`: the same value as the server's apiToken Secret.
-  apiTokenSecretName: factory-worker-api-token
+  # A Secret in the worker namespace, created by a human.
   # Key `api-key`: the model API key, given to workers as ANTHROPIC_API_KEY.
   modelKeySecretName: factory-model-api-key
   egress:

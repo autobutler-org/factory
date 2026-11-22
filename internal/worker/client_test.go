@@ -58,7 +58,7 @@ func TestClientProtocol(t *testing.T) {
 		"POST /api/v1/workers/empty/claim":   reply(204, ``),
 	})
 	ctx := t.Context()
-	id, err := c.Register(ctx, "n", "v1", []string{"claude-code"})
+	id, _, err := c.Register(ctx, "n", "v1", []string{"claude-code"})
 	if err != nil || id != "w1" {
 		t.Fatalf("Register = %q, %v", id, err)
 	}
@@ -129,7 +129,7 @@ func TestClientErrors(t *testing.T) {
 		t.Errorf("CodehostToken = %v, want the server's code", err)
 	}
 	unreachable := &Client{URL: "http://127.0.0.1:1"}
-	if _, err := unreachable.Register(ctx, "n", "v", nil); err == nil || !strings.Contains(err.Error(), "reachable") {
+	if _, _, err := unreachable.Register(ctx, "n", "v", nil); err == nil || !strings.Contains(err.Error(), "reachable") {
 		t.Errorf("Register on a dead server = %v, want advice to check the server", err)
 	}
 }

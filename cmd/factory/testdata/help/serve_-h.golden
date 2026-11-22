@@ -27,9 +27,6 @@ Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_ADDR):
       ghcr.io/autobutler-org/, a repository's image (image in
       .factory/config.toml) may come from; a prefix without a trailing / is
       one repository. Empty lets no repository choose its image
-  --launcher-api-token-secret NAME
-      Secret name in the worker namespace whose key "token" is given to
-      workers as FACTORY_API_TOKEN (default factory-worker-api-token)
   --launcher-capabilities STRING
       comma-separated capabilities the worker image registers; items requiring
       others are left alone (default claude-code)
@@ -80,4 +77,6 @@ Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_ADDR):
 Environment:
   FACTORY_API_TOKEN    bearer token required on /api/v1. When unset the API is
                        unauthenticated and --addr must be a loopback address.
+                       With --launcher it cannot act as a worker: workers
+                       register with their pod's ServiceAccount token.
 --- stderr

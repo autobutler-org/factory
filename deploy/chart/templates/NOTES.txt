@@ -15,7 +15,6 @@ The chart creates no Secrets. These must exist (see docs/operations.md):
   {{ .Release.Namespace }}/{{ .Values.github.privateKeySecretName }}  key private-key.pem  GitHub App private key
 {{- end }}
 {{- if .Values.launcher.enabled }}
-  {{ .Values.workers.namespace }}/{{ .Values.workers.apiTokenSecretName }}  key token  same value as the API token
   {{ .Values.workers.namespace }}/{{ .Values.workers.modelKeySecretName }}  key api-key  model API key
 {{- end }}
 

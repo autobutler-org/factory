@@ -35,7 +35,9 @@ Refuses to start against a database that is behind this binary's migrations.
 The --launcher flags start worker sandboxes as Kubernetes Jobs and need
 in-cluster config.`,
 		env: `  FACTORY_API_TOKEN    bearer token required on /api/v1. When unset the API is
-                       unauthenticated and --addr must be a loopback address.`,
+                       unauthenticated and --addr must be a loopback address.
+                       With --launcher it cannot act as a worker: workers
+                       register with their pod's ServiceAccount token.`,
 		fromEnv: true,
 		setup:   serveSetup,
 	}
@@ -142,6 +144,8 @@ func serveSetup(fs *flag.FlagSet) runner {
 		if jobs != nil {
 			// Assigned only when set: a nil *Jobs in the interface would not be nil.
 			apiConfig.Sandboxes = jobs
+			// The launcher's workers authenticate as their pods (#15).
+			apiConfig.IdentifyWorker = jobs.Identify
 		}
 		srv := &http.Server{
 			Handler:           api.New(apiConfig),

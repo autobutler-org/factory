@@ -17,7 +17,7 @@ wins over the environment.
 | `--github-app-id` | `FACTORY_GITHUB_APP_ID` | unset | GitHub App that mints workers' repository tokens. Set it together with `--github-app-key-file`, or leave both unset. |
 | `--github-app-key-file` | `FACTORY_GITHUB_APP_KEY_FILE` | unset | Path to the App's PEM private key. Read once at startup and never logged. |
 | `--github-api-url` | `FACTORY_GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL; for GitHub Enterprise, `https://<host>/api/v3`. Off github.com workers commit as `factory`, not the App's bot ([commit identity](architecture/codehost.md#commit-identity)). |
-| none | `FACTORY_API_TOKEN` | unset | Bearer token required on every `/api/v1` route. Environment only, so it does not show up in process listings. |
+| none | `FACTORY_API_TOKEN` | unset | Bearer token required on every `/api/v1` route. Environment only, so it does not show up in process listings. With `--launcher` it cannot act as a worker ([workload identity](architecture/workers.md#workload-identity)). |
 | `--launcher` | `FACTORY_LAUNCHER` | `false` | Run the launcher: start worker sandboxes as Kubernetes Jobs and run server-side steps (`merge`). Needs in-cluster config. |
 | `--launcher-namespace` | `FACTORY_LAUNCHER_NAMESPACE` | `factory-workers` | Namespace the worker Jobs run in. |
 | `--launcher-image` | `FACTORY_LAUNCHER_IMAGE` | none, required with `--launcher` | Default worker image, for every chain whose repository names no `image`. |
@@ -27,18 +27,21 @@ wins over the environment.
 | `--launcher-pending-timeout` | `FACTORY_LAUNCHER_PENDING_TIMEOUT` | `10m` | Destroy a worker sandbox still pending after this long (an image that will not pull, a pod that cannot be scheduled), with a logged reason, so it stops holding a slot; its chain gets a new one. `0` never does. |
 | `--launcher-poll-interval` | `FACTORY_LAUNCHER_POLL_INTERVAL` | `1m` | How often the launcher reads each open pull request of the items being worked from GitHub, to complete wait steps ([workers.md](architecture/workers.md#polling-the-code-host)). One GraphQL request per pull request per poll; at least `10s`, the launcher's pass. Needs a GitHub App. |
 | `--launcher-capabilities` | `FACTORY_LAUNCHER_CAPABILITIES` | `claude-code` | Comma-separated capabilities the worker image registers. Items that require anything else are neither planned nor given a sandbox. |
-| `--launcher-service-account` | `FACTORY_LAUNCHER_SERVICE_ACCOUNT` | `factory-worker` | ServiceAccount of worker pods. |
+| `--launcher-service-account` | `FACTORY_LAUNCHER_SERVICE_ACCOUNT` | `factory-worker` | ServiceAccount of worker pods. A worker registers with a projected token of this ServiceAccount; the server accepts no other. |
 | `--launcher-node-selector` | `FACTORY_LAUNCHER_NODE_SELECTOR` | unset | `key=value,...` node selector for worker pods. |
 | `--launcher-tolerations` | `FACTORY_LAUNCHER_TOLERATIONS` | unset | Tolerations for worker pods: `key=value:Effect` (operator Equal) or `key:Effect` (operator Exists), comma-separated. |
 | `--launcher-requests` | `FACTORY_LAUNCHER_REQUESTS` | `cpu=1,memory=2Gi,ephemeral-storage=10Gi` | Worker container requests. Only `cpu`, `memory` and `ephemeral-storage`. |
 | `--launcher-limits` | `FACTORY_LAUNCHER_LIMITS` | `cpu=4,memory=8Gi,ephemeral-storage=20Gi` | Worker container limits. |
-| `--launcher-api-token-secret` | `FACTORY_LAUNCHER_API_TOKEN_SECRET` | `factory-worker-api-token` | Secret in the worker namespace whose key `token` workers get as `FACTORY_API_TOKEN`. |
 | `--launcher-model-key-secret` | `FACTORY_LAUNCHER_MODEL_KEY_SECRET` | `factory-model-api-key` | Secret in the worker namespace whose key `api-key` workers get as `ANTHROPIC_API_KEY`. |
 | `--launcher-runtime-class` | `FACTORY_LAUNCHER_RUNTIME_CLASS` | unset | RuntimeClass of worker pods, such as `gvisor`. |
 
 When `FACTORY_API_TOKEN` is unset the API is unauthenticated. The server then refuses any `--addr` that is not a
-loopback address, and logs a warning at startup that it is bound to loopback only. This is a stopgap: one
-shared token and no caller identities. Sign-in, roles and scoped tokens arrive with #15.
+loopback address, and logs a warning at startup that it is bound to loopback only. For people this is a stopgap:
+one shared token and no caller identities; sign-in, roles and scoped tokens arrive with the rest of #15. Workers the
+launcher starts already authenticate as their pods, verified with a TokenReview, which needs the server's
+ServiceAccount bound to the ClusterRole `system:auth-delegator` (the chart does it). `--launcher-api-token-secret` is
+gone: workers get no shared token. Every credential is listed in
+[architecture/credentials.md](architecture/credentials.md).
 
 Without a GitHub App, `POST /api/v1/work/{id}/codehost-token` answers `503 codehost_not_configured`. The token flow
 is in [architecture/codehost.md](architecture/codehost.md#tokens).
@@ -72,8 +75,8 @@ Runs inside a worker sandbox; see [architecture/worker.md](architecture/worker.m
 | Flag | Environment | Default | Meaning |
 | --- | --- | --- | --- |
 | `--url` | `FACTORY_URL` | none, required | The factory server, for example `http://factory:8080`. |
-| `--token-file` | `FACTORY_TOKEN_FILE` | unset | File holding the bearer token, read on every request. |
-| none | `FACTORY_API_TOKEN` | unset | Bearer token when `--token-file` is not set. |
+| `--token-file` | `FACTORY_TOKEN_FILE` | unset | The pod's projected ServiceAccount token, sent once to register; the worker uses the credential the server answers with from then on. |
+| none | `FACTORY_API_TOKEN` | unset | Bearer token when `--token-file` is not set: for a worker outside Kubernetes against a server without `--launcher`. |
 | `--sandbox` | `FACTORY_SANDBOX` | the host name | The worker's name: the sandbox it runs in. The same name registers as the same worker. |
 | `--sandbox-key` | `FACTORY_SANDBOX_KEY` | unset | Claim only this chain's steps (`<item id>/<owner>/<repo>`). |
 | `--work-dir` | `FACTORY_WORK_DIR` | `$TMPDIR/factory-worker` | Where checkouts live, one per sandbox key. |

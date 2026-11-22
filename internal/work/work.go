@@ -22,7 +22,10 @@
 // docs/architecture/work.md for the states and the rules. RepoToken holds the
 // one rule about code host credentials: a token for a repository goes only
 // to a worker whose live step claim, or local claim on the item, covers that
-// repository (docs/architecture/codehost.md).
+// repository (docs/architecture/codehost.md). RegisterPod and
+// WorkerByCredential issue and look up the credential a worker pod gets
+// when it registers, bound to its worker and sandbox key; the API decides
+// what a credential may reach.
 package work
 
 import (

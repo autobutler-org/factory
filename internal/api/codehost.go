@@ -22,6 +22,9 @@ func (h handlers) codehostToken(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	if !h.actAs(w, r, req.WorkerID) {
+		return
+	}
 	token, err := h.cfg.Work.RepoToken(r.Context(), r.PathValue("id"), req.WorkerID, req.Repo, h.cfg.MintToken)
 	if err != nil {
 		h.fail(w, r, err)

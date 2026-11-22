@@ -56,7 +56,6 @@ Create these before installing. The names are the chart defaults.
 | `factory` | `factory-postgres` | `password` | Password of the in-cluster Postgres (only with `postgres.enabled`) |
 | `factory` | `factory-api-token` | `token` | Bearer token for `/api/v1` |
 | `factory` | `factory-github-app` | `private-key.pem` | GitHub App private key (only with `github.appId`) |
-| `factory-workers` | `factory-worker-api-token` | `token` | The same value as `factory-api-token` |
 | `factory-workers` | `factory-model-api-key` | `api-key` | Model API key, given to workers as `ANTHROPIC_API_KEY` |
 
 ```sh
@@ -64,11 +63,13 @@ token="$(openssl rand -hex 32)"
 kubectl -n factory create secret generic factory-database --from-literal=url='postgres://...'
 kubectl -n factory create secret generic factory-api-token --from-literal=token="$token"
 kubectl -n factory create secret generic factory-github-app --from-file=private-key.pem=./app.private-key.pem
-kubectl -n factory-workers create secret generic factory-worker-api-token --from-literal=token="$token"
 kubectl -n factory-workers create secret generic factory-model-api-key --from-literal=api-key='sk-ant-...'
 ```
 
-The two token Secrets must hold the same value. To rotate it, update both and restart the server.
+To rotate the API token, update `factory-api-token` and restart the server. Workers do not hold it: each worker pod
+registers with its own projected ServiceAccount token, which the server verifies with a TokenReview (the chart binds
+the server's ServiceAccount to `system:auth-delegator` for that). Every credential, who holds it and how it rotates
+is in [architecture/credentials.md](architecture/credentials.md).
 
 ## Install
 
@@ -142,6 +143,27 @@ the migration's output:
 ```sh
 kubectl -n factory logs deployment/factory -c migrate
 ```
+
+### Upgrading to workload identity
+
+The release that moves workers from the shared token to their pods' ServiceAccount tokens (#15) changes the server
+and the worker image together: an old worker cannot register with the new server (it sends no ServiceAccount token),
+and a new worker cannot register with an old server (it sends no shared token). Roll it out in this order:
+
+1. Let running sandboxes finish, or accept that their steps return to `ready` when their leases expire: with the
+   launcher off for a moment (`launcher.enabled=false`), no new Jobs start.
+2. `helm upgrade` the chart at the new release. That updates the server image, adds the ClusterRoleBinding to
+   `system:auth-delegator`, and points `launcher.image`'s default at the same release's worker image. Wait for the
+   rollout (`kubectl -n factory rollout status deployment/factory`).
+3. Rebuild every image built `FROM` the worker image, such as quark's, from the new release's tag, and push it under
+   the same allowed prefix. A derived image still on the old base registers, ignores the credential it gets back, and
+   is refused (`401`) on its first heartbeat; its chain uses up the step's attempts until the image is rebuilt.
+4. Turn the launcher back on. The first Job's log shows `registered`; `kubectl -n factory logs deployment/factory`
+   shows `worker pod registered` with the sandbox and pod.
+5. Delete the Secret `factory-workers/factory-worker-api-token`; nothing reads it any more.
+
+If registration fails with `500` and the server log says `system:auth-delegator`, the ClusterRoleBinding is missing:
+the chart was not upgraded, or the cluster forbids Helm from creating cluster-scoped objects.
 
 ## Worker Jobs
 
@@ -390,7 +412,7 @@ kubectl -n factory exec factory-postgres-0 -- pg_dump -U factory -d factory --fo
 
 - The load balancer serves plain HTTP with no TLS, so the API and its bearer token cross the network unencrypted.
   This must be resolved before real use.
-- One shared bearer token serves both the API and the workers until #15.
+- One shared bearer token serves every person and the CLI until the people half of #15. Workers no longer hold it.
 - Every holder of that token can read every worker's log, which carries the agent transcript: command output and
   file contents the session printed. Logs are not kept after a worker Job is deleted.
 - The server has no `/metrics` endpoint yet (#13), so the PodMonitor has nothing to scrape.

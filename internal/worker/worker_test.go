@@ -172,3 +172,35 @@ func TestRunStopsAStepTheHeartbeatDrops(t *testing.T) {
 		t.Errorf("calls = %v, want no report on a lost step", s.calls)
 	}
 }
+
+// TestRunSwitchesToItsCredential sends the pod's token once, to register,
+// and the credential the server answers with on every call after.
+func TestRunSwitchesToItsCredential(t *testing.T) {
+	var mu sync.Mutex
+	auth := map[string][]string{}
+	s := &fakeServer{leaseSec: "300", held: []string{"s1"}}
+	inner := s.handler(mergeStep)
+	url := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		auth[r.Header.Get("Authorization")] = append(auth[r.Header.Get("Authorization")], r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		if r.URL.Path == "/api/v1/workers" {
+			_, _ = w.Write([]byte(`{"id":"w1","credential":"fwc_secret"}`))
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	cfg := runConfig(t, url, &codehost.Fake{Repo: "o/r", Pulls: []codehost.Pull{{Number: 1, State: "open"}}})
+	cfg.Client.Token = func() (string, error) { return "pod-token", nil }
+	if err := Run(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got := auth["Bearer pod-token"]; len(got) != 1 || got[0] != "POST /api/v1/workers" {
+		t.Errorf("pod token sent for %v, want the registration only", got)
+	}
+	if len(auth["Bearer fwc_secret"]) < 3 || len(auth) != 2 {
+		t.Errorf("requests by token = %v, want everything after registering on the credential", auth)
+	}
+}

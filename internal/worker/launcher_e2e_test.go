@@ -6,12 +6,16 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/autobutler-org/factory/internal/api"
 	"github.com/autobutler-org/factory/internal/codehost"
 	"github.com/autobutler-org/factory/internal/codehost/fakegh"
 	"github.com/autobutler-org/factory/internal/harness"
@@ -19,17 +23,20 @@ import (
 	"github.com/autobutler-org/factory/internal/sandbox"
 	"github.com/autobutler-org/factory/internal/work"
 	"github.com/autobutler-org/factory/internal/worker"
+	authnv1 "k8s.io/api/authentication/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
 )
 
 // cluster stands in for Kubernetes under the real sandbox.Jobs runtime: a
-// Job the launcher creates runs the real worker loop in-process, configured
+// Job the launcher creates gets a pod and a projected token the cluster's
+// TokenReview vouches for, runs the real worker loop in-process, configured
 // from the Job's container environment as factory worker would read it, and
 // is marked complete when the worker exits.
 type cluster struct {
@@ -39,6 +46,31 @@ type cluster struct {
 	mu     sync.Mutex
 	jobs   []*batchv1.Job
 	errs   []error
+	// tokens are the pods' projected tokens, by token.
+	tokens map[string]*corev1.Pod
+}
+
+// review answers a TokenReview for a pod token this cluster issued.
+func (c *cluster) review(action k8stesting.Action) (bool, runtime.Object, error) {
+	review := action.(k8stesting.CreateAction).GetObject().(*authnv1.TokenReview).DeepCopy()
+	c.mu.Lock()
+	pod, ok := c.tokens[review.Spec.Token]
+	c.mu.Unlock()
+	if !ok || !slices.Contains(review.Spec.Audiences, "factory") {
+		review.Status.Error = "invalid bearer token"
+		return true, review, nil
+	}
+	review.Status = authnv1.TokenReviewStatus{
+		Authenticated: true, Audiences: []string{"factory"},
+		User: authnv1.UserInfo{
+			Username: "system:serviceaccount:" + pod.Namespace + ":factory-worker",
+			Extra: map[string]authnv1.ExtraValue{
+				"authentication.kubernetes.io/pod-name": {pod.Name},
+				"authentication.kubernetes.io/pod-uid":  {string(pod.UID)},
+			},
+		},
+	}
+	return true, review, nil
 }
 
 func (c *cluster) create(action k8stesting.Action) (bool, runtime.Object, error) {
@@ -51,8 +83,26 @@ func (c *cluster) create(action k8stesting.Action) (bool, runtime.Object, error)
 		env[v.Name] = v.Value
 	}
 	c.wg.Go(func() {
+		// The Job controller's pod, and the kubelet's token for it at
+		// FACTORY_TOKEN_FILE.
+		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: job.Name + "-pod", Namespace: job.Namespace, UID: types.UID("uid-" + job.Name),
+			Labels:          map[string]string{batchv1.JobNameLabel: job.Name},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Controller: new(true)}},
+		}}
+		if _, err := c.client.CoreV1().Pods(job.Namespace).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+			c.e.t.Error(err)
+			return
+		}
+		token := "projected-token-of-" + pod.Name
+		c.mu.Lock()
+		c.tokens[token] = pod
+		c.mu.Unlock()
+		if env["FACTORY_TOKEN_FILE"] == "" {
+			c.e.t.Errorf("Job %s has no FACTORY_TOKEN_FILE", job.Name)
+		}
 		err := worker.Run(c.e.t.Context(), worker.Config{
-			Client:     &worker.Client{URL: env["FACTORY_URL"]},
+			Client:     &worker.Client{URL: env["FACTORY_URL"], Token: func() (string, error) { return token, nil }},
 			Name:       env["FACTORY_SANDBOX"],
 			SandboxKey: env["FACTORY_SANDBOX_KEY"],
 			// FACTORY_WORK_DIR is /workspace, the pod's emptyDir; here a
@@ -106,15 +156,28 @@ func TestE2ELauncherStartsTheWorker(t *testing.T) {
 		},
 		AllowedImages: allowed,
 	})
-	c := &cluster{e: e, client: fake.NewClientset()}
+	c := &cluster{e: e, client: fake.NewClientset(), tokens: map[string]*corev1.Pod{}}
 	c.client.PrependReactor("create", "jobs", c.create)
+	c.client.PrependReactor("create", "tokenreviews", c.review)
+	// The server as factory serve --launcher runs it: workers authenticate
+	// as their pods, and the people's token cannot act as one.
+	var handler http.Handler
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.ServeHTTP(w, r) }))
+	t.Cleanup(srv.Close)
 	jobs, err := sandbox.NewJobs(c.client, &rest.Config{Host: "https://kube.test"}, sandbox.JobsConfig{
-		Namespace: "factory-workers", Image: "ghcr.io/autobutler-org/factory-worker:test", ServerURL: e.api,
-		ServiceAccountName: "factory-worker", APITokenSecret: "factory-worker-api-token", ModelKeySecret: "factory-model-api-key",
+		Namespace: "factory-workers", Image: "ghcr.io/autobutler-org/factory-worker:test", ServerURL: srv.URL,
+		ServiceAccountName: "factory-worker", ModelKeySecret: "factory-model-api-key",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	handler = api.New(api.Config{
+		Work: e.svc, Ready: func(context.Context) error { return nil }, Token: "people-token", Logger: slog.New(slog.DiscardHandler),
+		MintToken: func(context.Context, string) (codehost.Token, error) {
+			return codehost.Token{Token: ghToken, ExpiresAt: time.Now().Add(time.Hour)}, nil
+		},
+		IdentifyWorker: jobs.Identify, Sandboxes: jobs,
+	})
 	l := &launcher.Launcher{
 		Work: svc, Pool: e.pool, Runtime: jobs, MaxSandboxes: 2, Capabilities: []string{"claude-code"}, AllowedImages: allowed,
 		PendingTimeout: 10 * time.Minute, Logger: slog.New(slog.NewTextHandler(t.Output(), nil)),
@@ -163,8 +226,11 @@ func TestE2ELauncherStartsTheWorker(t *testing.T) {
 		envs[v.Name] = v.Value
 	}
 	key := e.item.ID + "/" + repo
-	if envs["FACTORY_SANDBOX"] != job.Name || envs["FACTORY_SANDBOX_KEY"] != key || envs["FACTORY_URL"] != e.api || !strings.HasPrefix(job.Name, "worker-") {
+	if envs["FACTORY_SANDBOX"] != job.Name || envs["FACTORY_SANDBOX_KEY"] != key || envs["FACTORY_URL"] != srv.URL || !strings.HasPrefix(job.Name, "worker-") {
 		t.Errorf("Job %s env = %v", job.Name, envs)
+	}
+	if _, ok := envs["FACTORY_API_TOKEN"]; ok {
+		t.Errorf("Job %s carries FACTORY_API_TOKEN; a worker pod must hold no shared token", job.Name)
 	}
 	workers, err := e.svc.Workers(t.Context())
 	if err != nil || len(workers) != 1 || workers[0].Name != job.Name {

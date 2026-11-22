@@ -20,7 +20,7 @@ internal/lease/     lease protocol rules (policy, claimant check, retry or give 
 internal/plan/      the pure planner: work item to step graph, and which step may run next; no SQL
 internal/api/       the HTTP API handlers and middleware (docs/api.md); no SQL, no state rules
 internal/codehost/  the code host (GitHub): pull requests, checks, merge, App tokens; codehost.Fake and fakegh/ for tests (#10)
-internal/sandbox/   starts, tracks, and destroys worker sandboxes (Kubernetes Jobs), execs into them (#9), reads their logs (#50)
+internal/sandbox/   starts, tracks, and destroys worker sandboxes (Kubernetes Jobs), execs into them (#9), reads their logs (#50), verifies their pods' tokens (#15)
 internal/doctor/    the checks `factory doctor` reports (server side, worker image, version); pass, fail or skip with a fix
 internal/apiclient/ the HTTP client of the factory API that the worker and the CLI share; errors as *apiclient.Error
 internal/worker/    the step executor `factory worker` runs: protocol client, heartbeat, and each step kind (#11)
@@ -36,7 +36,7 @@ compose.yaml        the development Postgres, on loopback
 Dockerfile          the server image (distroless, non-root); Dockerfile.worker is the agent dev container
 deploy/chart/       the Helm chart; values-autobutler.yaml matches our cluster (docs/operations.md)
 web/                the web UI (React, Vite, TypeScript; Vitest, ESLint, Prettier), built into internal/server/public (#14)
-docs/               api.md, cli.md (CLI conventions and commands), config.md, operations.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols, worker HTTP contract and the launcher; worker.md: what `factory worker` does per step kind; codehost.md: the code host and its tokens)
+docs/               api.md, cli.md (CLI conventions and commands), config.md, operations.md, decisions/ (numbered decision records), and architecture/ (work.md: states and rules; graph.md: the step graph and default template; workers.md: lease protocols, worker HTTP contract and the launcher; worker.md: what `factory worker` does per step kind; codehost.md: the code host and its tokens; credentials.md: every credential, who holds it, how it rotates)
 build/              build output (./build/factory); not source
 .claude/skills/     interface design skills vendored from schmeide/template (MIT; LICENSE and UPSTREAM_COMMIT inside)
 .github/workflows/  ci.yml (build, race tests, test-db and e2e on Postgres, web), check.yml (make check/go,

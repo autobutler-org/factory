@@ -15,7 +15,7 @@ spec:
         {{- include "factory.labels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "factory.fullname" . }}
-      # The token is only needed to create worker Jobs.
+      # The token is only needed to create worker Jobs and verify their pods' tokens.
       automountServiceAccountToken: {{ .Values.launcher.enabled }}
       securityContext:
         {{- include "factory.podSecurityContext" . | nindent 8 }}
@@ -116,8 +116,6 @@ spec:
             - name: FACTORY_LAUNCHER_LIMITS
               value: {{ include "factory.pairs" . | quote }}
             {{- end }}
-            - name: FACTORY_LAUNCHER_API_TOKEN_SECRET
-              value: {{ .Values.workers.apiTokenSecretName | quote }}
             - name: FACTORY_LAUNCHER_MODEL_KEY_SECRET
               value: {{ .Values.workers.modelKeySecretName | quote }}
             {{- with .Values.launcher.runtimeClassName }}

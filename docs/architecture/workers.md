@@ -289,19 +289,52 @@ allowed `image`; a derived image keeps the contract in the header of `Dockerfile
 | `FACTORY_SANDBOX_KEY` | The chain's sandbox key, `<item id>/<repo>`. The worker sends it as `sandbox_key` on every claim and exits 0 when a claim returns `204`. |
 | `FACTORY_WORK_DIR` | `/workspace`, the emptyDir for checkouts |
 | `FACTORY_HARNESSES` | `claude-code`, the only agent CLI the worker image installs |
-| `FACTORY_API_TOKEN` | The bearer token, from key `token` of the Secret `--launcher-api-token-secret` in the worker namespace |
+| `FACTORY_TOKEN_FILE` | `/var/run/factory/token`, the pod's projected ServiceAccount token, which it registers with ([below](#workload-identity)) |
 | `ANTHROPIC_API_KEY` | The model API key, from key `api-key` of the Secret `--launcher-model-key-secret` |
 
-`FACTORY_TOKEN_FILE` is not set: the worker would send that file as its bearer token in place of
-`FACTORY_API_TOKEN`, and the server does not accept a ServiceAccount token until #15. The projected token is mounted
-at `/var/run/factory/token` (audience `factory`) for #15 to use. On `SIGTERM` the worker releases its step; the pod's
-termination grace period is 60 seconds.
+The pod gets no `FACTORY_API_TOKEN`: the token people use is not in any worker pod. On `SIGTERM` the worker releases
+its step; the pod's termination grace period is 60 seconds.
 
 Files: `/var/run/factory/token` (read-only), and an `emptyDir` at `/workspace`, writable, for clones (its size counts against the ephemeral-storage limit). The image's
 user is uid 1000 with a writable home, `/home/factory`. The pod runs with no Kubernetes API token, as non-root,
 with no privilege escalation and every capability dropped, with the configured node selector, tolerations,
 requests and limits (ephemeral storage included). The Job has `backoffLimit: 0`: a worker that dies is not
 restarted; its step returns to `ready` and the next pass starts a fresh sandbox for the chain.
+
+### Workload identity
+
+With the launcher on, a worker authenticates as its pod, not with a shared secret
+([decision 0002](../decisions/0002-worker-credentials.md)):
+
+1. The worker sends its projected ServiceAccount token (audience `factory`, one hour, rotated by the kubelet) as the
+   bearer token of `POST /api/v1/workers`, once.
+2. The server verifies it with a Kubernetes TokenReview (`sandbox.Jobs.Identify`; the API server checks signature,
+   expiry, audience and that the pod still exists), and checks that it is the worker ServiceAccount's in the worker
+   namespace and that its pod is controlled by a Job the launcher created. The worker is named after that Job and
+   bound to the Job's sandbox key, whatever the body says.
+3. The reply carries `credential`, a random secret (`fwc_...`) the server stores only as a SHA-256 hash in
+   `worker_credentials`, beside the pod's uid and the sandbox key. The worker keeps it in memory and sends it on every
+   later call. It is returned once.
+
+A worker credential reaches only heartbeat, claim, step stage, result and release, and `codehost-token`, and on each
+only for its own worker ID: another worker's ID is `403 forbidden`. A claim takes only from the credential's sandbox
+key; a different `sandbox_key` in the body is `403 forbidden`. Every other route is `403 forbidden` for it. Step and
+code host token rules then apply as for any worker, so it can act only on the steps it holds.
+
+A pod registers once: the same pod again gets `409 already_registered`, so the token file is worth nothing once the
+worker has registered. A new pod of the same sandbox replaces the binding and the old credential stops working. A
+credential stops working when its worker is marked `gone`; that worker exits and its chain gets a new sandbox.
+
+With the launcher on, the shared `FACTORY_API_TOKEN` is refused with `403 workload_identity_required` wherever it
+would act as a worker: registering, heartbeats, both claim protocols, stage and result reports, worker outputs,
+releases and code host tokens. It keeps working for people and the CLI on every other route until the people half of
+#15. Without the launcher nothing changes: a worker outside Kubernetes (tests, a laptop) uses `FACTORY_API_TOKEN`
+and no workload identity is involved.
+
+An expired, forged, wrong-audience or wrong-issuer token, a token of another ServiceAccount or namespace, or one whose
+pod is gone gets `401 unauthorized` with the API server's reason and what to send instead. A server whose
+ServiceAccount may not create TokenReviews answers `500`, and its log names the ClusterRole it needs
+(`system:auth-delegator`).
 
 ## The item protocol (local claims)
 
@@ -375,7 +408,9 @@ Heartbeats do not, because they would bury the history; they only move `workers.
 ## HTTP contract
 
 All paths are under `factory serve`'s address. When the server has `FACTORY_API_TOKEN` set, every request needs
-`Authorization: Bearer <token>`; a server without a token listens on loopback only. Request and response bodies
+`Authorization: Bearer <token>`; a server without a token listens on loopback only. With the launcher on, a cluster
+worker's bearer token is its pod's ServiceAccount token to register and its credential after
+([workload identity](#workload-identity)). Request and response bodies
 are JSON. Unknown request fields are refused with `400 malformed_request`. Every response has an `X-Request-ID`.
 
 ### Register: `POST /api/v1/workers`
@@ -384,7 +419,8 @@ are JSON. Unknown request fields are refused with `400 malformed_request`. Every
 {"name": "sandbox-7f3a", "kind": "cluster", "capabilities": {"harnesses": ["claude"], "labels": ["gpu"]}, "version": "1.4.0"}
 ```
 
-`name` and `kind` (`cluster` or `local`) are required. `200` with the worker:
+`name` and `kind` (`cluster` or `local`) are required, except for a pod registering with its ServiceAccount token,
+whose name and kind the server sets. `200` with the worker, and for a pod also `"credential": "fwc_..."`:
 
 ```json
 {"id": "6f1c...", "name": "sandbox-7f3a", "kind": "cluster", "capabilities": {"harnesses": ["claude"], "labels": ["gpu"]},
@@ -483,7 +519,10 @@ handle:
 
 | Status | `code` | What the worker does |
 | --- | --- | --- |
-| 401 | `unauthorized` | Fix the token; do not retry blindly. |
+| 401 | `unauthorized` | Fix the token; do not retry blindly. A worker credential refused here means the worker was replaced or marked gone: exit. |
+| 403 | `forbidden` | A worker credential used for another worker, another sandbox key, or a route that is not the worker protocol. |
+| 403 | `workload_identity_required` | The shared token used as a worker while the launcher is on. |
+| 409 | `already_registered` | The pod has registered before; a worker registers once per pod. |
 | 404 | `not_found` | Unknown worker or item. For a worker ID, register again. |
 | 404 | `not_found` | Also: an unknown step. |
 | 409 | `not_claimant` | The worker does not hold this item or step. Stop working on it. |

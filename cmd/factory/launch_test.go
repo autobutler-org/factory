@@ -24,7 +24,7 @@ func TestWorkerJobEnvironmentIsWhatTheWorkerReads(t *testing.T) {
 	client := fake.NewClientset()
 	jobs, err := sandbox.NewJobs(client, &rest.Config{Host: "https://kube.test"}, sandbox.JobsConfig{
 		Namespace: "factory-workers", Image: "w:1", ServerURL: "http://factory:80",
-		APITokenSecret: "factory-worker-api-token", ModelKeySecret: "factory-model-api-key",
+		ModelKeySecret: "factory-model-api-key",
 	})
 	if err != nil {
 		t.Fatal(err)
