@@ -1,0 +1,6 @@
+$ factory completion tcsh
+exit 2
+--- stdout
+--- stderr
+factory completion: no completion for "tcsh"; use bash, zsh or fish
+Run 'factory completion --help' for usage.

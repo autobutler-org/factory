@@ -1,0 +1,6 @@
+$ factory completion
+exit 2
+--- stdout
+--- stderr
+factory completion: missing <bash|zsh|fish>
+Run 'factory completion --help' for usage.
