@@ -8,6 +8,7 @@ Usage:
   factory [-h | --help]
 
 Commands:
+  doctor          Check the setup and say how to fix what is wrong.
   migrate down    Roll back the most recent migration only.
   migrate status  Print the applied version and each migration as applied or pending.
   migrate up      Apply every pending migration.

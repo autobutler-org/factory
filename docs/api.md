@@ -45,6 +45,11 @@ to have yours used instead.
 `oldest_ready` is the item that has waited in `ready` longest; `recent_failures` are the five latest `failed`
 items, newest first. `factory status` prints it.
 
+`GET /api/v1/admin/doctor` answers `200 {"version": "...", "checks": [{"name", "status", "detail"?, "fix"?, "command"?}]}`
+with the server's version and its own checks (database, code host credential, sandbox runtime, an active cluster
+worker), each `pass`, `fail` or `skip`. A failing check is still a `200`. `factory doctor` reads it; the checks are in
+[cli.md](cli.md#factory-doctor).
+
 Cluster workers claim steps (`POST /api/v1/workers/{id}/claim`) and report on them under
 `/api/v1/steps/{id}/` (`stage`, `result`, `release`); adapters complete wait steps with
 `POST /api/v1/steps/{id}/complete`. Developers claim whole items under `/api/v1/work/{id}/` (`claim`, `stage`,

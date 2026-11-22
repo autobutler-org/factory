@@ -61,6 +61,8 @@ func fakeApp(t *testing.T, key *rsa.PublicKey, expires time.Time) *httptest.Serv
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/app":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 12345, "slug": "autobutler-factory"})
+		case r.Method == http.MethodGet && r.URL.Path == "/app/installations":
+			_, _ = w.Write([]byte(`[{"id":61234567}]`))
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/installation":
 			_ = json.NewEncoder(w).Encode(map[string]int64{"id": 61234567})
 		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/61234567/access_tokens":
@@ -112,6 +114,24 @@ func TestMintIsScopedToOneRepository(t *testing.T) {
 	}
 	if _, err := (TokenMinter{AppID: "12345", Key: parsed, API: gh.URL}).Mint(t.Context(), "no-slash"); err == nil {
 		t.Error("Mint for a repository without an owner: no error")
+	}
+}
+
+func TestInstallations(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := fakeApp(t, &key.PublicKey, time.Now().Add(time.Hour))
+	if n, err := (TokenMinter{AppID: "12345", Key: key, API: gh.URL}).Installations(t.Context()); n != 1 || err != nil {
+		t.Errorf("Installations = %d, %v; want 1", n, err)
+	}
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"A JSON web token could not be decoded"}`, http.StatusUnauthorized)
+	}))
+	t.Cleanup(refusing.Close)
+	if _, err := (TokenMinter{AppID: "12345", Key: key, API: refusing.URL}).Installations(t.Context()); err == nil || !strings.Contains(err.Error(), "could not be decoded") {
+		t.Errorf("Installations with a refused key = %v, want GitHub's message", err)
 	}
 }
 
