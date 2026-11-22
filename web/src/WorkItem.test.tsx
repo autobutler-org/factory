@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { failedItem, itemRoutes, ITEM_ID } from "./fixtures";
 import { POLL_MS } from "./poll";
 import { mockAPI, renderWithAPI } from "./testing";
@@ -101,7 +101,8 @@ test("a work item that does not exist says so, links to the board and stops aski
     expect(screen.getByText(/No work item has the ID/)).toHaveTextContent("nope");
     expect(screen.getByRole("link", { name: "Go to the board" })).toHaveAttribute("href", "/");
     expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
-    expect(document.title).toBe("Work item not found · factory");
+    // The title is set in an effect, after the heading is on the page.
+    await waitFor(() => expect(document.title).toBe("Work item not found · factory"));
 
     const calls = fetch.mock.calls.length;
     await vi.advanceTimersByTimeAsync(3 * POLL_MS);
@@ -115,5 +116,5 @@ test("the page title is the item's title", async () => {
   mockAPI(itemRoutes());
   renderWithAPI(<WorkItemPage id={ITEM_ID} />);
   await screen.findByRole("heading", { level: 1, name: "build the factory web UI" });
-  expect(document.title).toBe("build the factory web UI · factory");
+  await waitFor(() => expect(document.title).toBe("build the factory web UI · factory"));
 });
