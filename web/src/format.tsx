@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import { ApiError } from "./api";
 import { POLL_MS } from "./poll";
 
@@ -88,19 +88,41 @@ export function Status({
   );
 }
 
-// Block is preformatted text that scrolls past 30rem. It joins the tab order and carries a name,
-// so a keyboard can scroll it (WCAG 2.1.1).
+// Block is preformatted text that scrolls past 30rem. It carries a name, and joins the tab order
+// while its text overflows, so a keyboard can scroll it (WCAG 2.1.1) without a tab stop on every
+// short block. It measures after each render and when its box resizes (a window resize, or a
+// <details> around it opening).
 export function Block({
   label,
   className,
   children,
+  ref,
+  onScroll,
 }: {
   label: string;
   className: string;
   children: ReactNode;
+  ref?: RefObject<HTMLPreElement | null>;
+  onScroll?: () => void;
 }) {
+  const own = useRef<HTMLPreElement>(null);
+  const pre = ref ?? own;
+  useLayoutEffect(() => {
+    const el = pre.current;
+    if (!el) return;
+    // Set on the element, not through state, so measuring does not render again.
+    const measure = () => {
+      if (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth) el.tabIndex = 0;
+      else el.removeAttribute("tabindex");
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  });
   return (
-    <pre className={className} tabIndex={0} role="region" aria-label={label}>
+    <pre ref={pre} className={className} role="region" aria-label={label} onScroll={onScroll}>
       {children}
     </pre>
   );

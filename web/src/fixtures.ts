@@ -144,5 +144,6 @@ export function itemRoutes(f = failedItem) {
     [`${base}/events`]: f.events,
     [`${base}/outputs`]: f.outputs,
     [`${base}/graph`]: f.graph,
+    [`${base}/sandboxes`]: { sandboxes: [] },
   };
 }

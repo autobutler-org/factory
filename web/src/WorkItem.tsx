@@ -1,5 +1,6 @@
 import { ApiError, type Get, type Graph, type Output, type WorkEvent, type WorkItem } from "./api";
 import { Block, label, State, Status, Time } from "./format";
+import { Sandboxes } from "./Logs";
 import { Link, useTitle } from "./nav";
 import { usePoll } from "./poll";
 
@@ -127,6 +128,7 @@ export function WorkItemPage({ id }: { id: string }) {
       </section>
 
       <Steps graph={graph} events={events} />
+      <Sandboxes id={item.id} />
       <Timeline events={events} />
     </>
   );

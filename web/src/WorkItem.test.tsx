@@ -72,7 +72,14 @@ test("the timeline lists events oldest first with transitions and reasons", asyn
   expect(events[4]).toHaveTextContent("in progress → failed");
 });
 
-test("a long reason scrolls in a region the keyboard can reach", async () => {
+test("a long reason scrolls in a region the keyboard can reach; a short one is no tab stop", async () => {
+  // jsdom does no layout: make every pre overflow when its text is long.
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+    this: HTMLElement
+  ) {
+    return (this.textContent ?? "").length > 1000 ? 2000 : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(480);
   mockAPI(itemRoutes());
   renderWithAPI(<WorkItemPage id={ITEM_ID} />);
   const reason = await screen.findByRole("region", {
@@ -80,6 +87,7 @@ test("a long reason scrolls in a region the keyboard can reach", async () => {
   });
   expect(reason).toHaveAttribute("tabindex", "0");
   expect(reason.textContent).toContain(failedItem.gateOutput);
+  expect(screen.getByRole("region", { name: "Reason" })).not.toHaveAttribute("tabindex");
 });
 
 test("a work item that does not exist says so, links to the board and stops asking", async () => {
