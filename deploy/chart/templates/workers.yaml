@@ -46,3 +46,20 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "factory.fullname" . }}
     namespace: {{ .Release.Namespace }}
+---
+# The launcher's workers register with their pods' projected ServiceAccount tokens, which the server verifies with
+# a TokenReview. system:auth-delegator grants that (create tokenreviews and subjectaccessreviews) and nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "factory.fullname" . }}-{{ .Release.Namespace }}-token-review
+  labels:
+    {{- include "factory.workerLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "factory.fullname" . }}
+    namespace: {{ .Release.Namespace }}

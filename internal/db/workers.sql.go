@@ -10,6 +10,37 @@ import (
 	"encoding/json"
 )
 
+const bindWorkerCredential = `-- name: BindWorkerCredential :one
+INSERT INTO worker_credentials (worker_id, pod_uid, sandbox_key, credential_hash)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (worker_id) DO UPDATE
+SET pod_uid = EXCLUDED.pod_uid, sandbox_key = EXCLUDED.sandbox_key,
+    credential_hash = EXCLUDED.credential_hash, created_at = now()
+WHERE worker_credentials.pod_uid <> EXCLUDED.pod_uid
+RETURNING worker_id
+`
+
+type BindWorkerCredentialParams struct {
+	WorkerID       string `json:"worker_id"`
+	PodUid         string `json:"pod_uid"`
+	SandboxKey     string `json:"sandbox_key"`
+	CredentialHash []byte `json:"credential_hash"`
+}
+
+// Binds a worker to the pod it runs in, with a new credential. A pod binds
+// once: the same pod uid again changes nothing and returns no row.
+func (q *Queries) BindWorkerCredential(ctx context.Context, arg BindWorkerCredentialParams) (string, error) {
+	row := q.db.QueryRow(ctx, bindWorkerCredential,
+		arg.WorkerID,
+		arg.PodUid,
+		arg.SandboxKey,
+		arg.CredentialHash,
+	)
+	var worker_id string
+	err := row.Scan(&worker_id)
+	return worker_id, err
+}
+
 const delayAvailability = `-- name: DelayAvailability :one
 UPDATE work_items SET available_at = now() + make_interval(secs => $1::float8) WHERE id = $2 RETURNING id, source, external_id, external_url, title, body, repos, state, stage, state_reason, priority, attempts, outputs_done, created_at, updated_at, state_changed_at, idempotency_key, claimed_by, claimed_at, lease_expires_at, stage_reported_at, available_at, requires
 `
@@ -528,5 +559,25 @@ func (q *Queries) TouchWorker(ctx context.Context, id string) (Worker, error) {
 		&i.LastSeenAt,
 		&i.State,
 	)
+	return i, err
+}
+
+const workerByCredential = `-- name: WorkerByCredential :one
+SELECT c.worker_id, c.sandbox_key
+FROM worker_credentials c
+JOIN workers w ON w.id = c.worker_id
+WHERE c.credential_hash = $1 AND w.state <> 'gone'
+`
+
+type WorkerByCredentialRow struct {
+	WorkerID   string `json:"worker_id"`
+	SandboxKey string `json:"sandbox_key"`
+}
+
+// The worker a credential belongs to. A worker marked gone has lost it.
+func (q *Queries) WorkerByCredential(ctx context.Context, credentialHash []byte) (WorkerByCredentialRow, error) {
+	row := q.db.QueryRow(ctx, workerByCredential, credentialHash)
+	var i WorkerByCredentialRow
+	err := row.Scan(&i.WorkerID, &i.SandboxKey)
 	return i, err
 }

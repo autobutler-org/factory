@@ -38,6 +38,9 @@ func (h handlers) stepStage(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	if !h.actAs(w, r, req.WorkerID) {
+		return
+	}
 	h.respondItem(w, r)(h.cfg.Work.ReportStepStage(r.Context(), r.PathValue("id"), req.WorkerID, req.Stage, req.Outputs))
 }
 
@@ -50,6 +53,9 @@ func (h handlers) stepResult(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	if !h.actAs(w, r, req.WorkerID) {
+		return
+	}
 	h.respondItem(w, r)(h.cfg.Work.ReportStepResult(r.Context(), r.PathValue("id"), req.WorkerID, req.result()))
 }
 
@@ -60,6 +66,9 @@ func (h handlers) stepRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decode(r, &req); err != nil {
 		h.fail(w, r, err)
+		return
+	}
+	if !h.actAs(w, r, req.WorkerID) {
 		return
 	}
 	h.respondItem(w, r)(h.cfg.Work.ReleaseStep(r.Context(), r.PathValue("id"), req.WorkerID, req.Reason))

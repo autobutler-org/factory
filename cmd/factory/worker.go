@@ -24,7 +24,8 @@ func workerCommand() command {
 time, run each, and report the result. Exits 0 when the server has nothing
 left to hand out. On SIGTERM the step in hand is released, which counts no
 attempt.`,
-		env:     "  FACTORY_API_TOKEN    bearer token when --token-file is not set",
+		env: `  FACTORY_API_TOKEN    bearer token when --token-file is not set: for a worker
+                       outside Kubernetes, against a server without --launcher`,
 		fromEnv: true,
 		setup:   workerSetup,
 	}
@@ -35,7 +36,7 @@ const harnessCheckTimeout = 30 * time.Second
 
 func workerSetup(fs *flag.FlagSet) runner {
 	url := fs.String("url", "", "the factory server `URL` (required)")
-	tokenFile := fs.String("token-file", "", "`file` holding the bearer token, read on every request")
+	tokenFile := fs.String("token-file", "", "`file` holding the pod's projected ServiceAccount token, sent once to register; the server answers with the worker's credential")
 	name := fs.String("sandbox", "", "the worker's `name`, the sandbox it runs in (default: the host name)")
 	sandboxKey := fs.String("sandbox-key", "", "claim only this chain's steps (<item id>/<owner>/<repo>)")
 	workDir := fs.String("work-dir", "", "`directory` where checkouts live (default $TMPDIR/factory-worker)")
@@ -117,8 +118,8 @@ func pickHarnesses(list string) ([]harness.Harness, error) {
 	return out, nil
 }
 
-// bearer returns the token source: the file, read fresh on every request so
-// a token the kubelet rotates is picked up, or FACTORY_API_TOKEN.
+// bearer returns the token source until the worker registers: the file,
+// read when asked, or FACTORY_API_TOKEN.
 func bearer(file string) func() (string, error) {
 	if file == "" {
 		token := os.Getenv(apiTokenEnv)

@@ -7,8 +7,15 @@
 // Every error has one shape, {"error": {"code", "message", "request_id", ...}},
 // with a stable machine-readable code. The package also adds request IDs,
 // access logs, a request body limit and, when a token is configured, bearer
-// token authentication on /api/v1. It does not listen or manage the server's
-// lifetime; cmd/factory does.
+// token authentication on /api/v1.
+//
+// With Config.IdentifyWorker set (workload identity, #15), a cluster worker
+// registers with its pod's projected ServiceAccount token and gets a
+// credential bound to its worker and sandbox key. That credential reaches
+// only the worker protocol routes, only for its own worker and chain, and
+// the shared token is refused wherever it would act as a worker. People and
+// the CLI still share the one token until the people half of #15. The
+// package does not listen or manage the server's lifetime; cmd/factory does.
 package api
 
 import (
@@ -67,6 +74,11 @@ type Config struct {
 	// without the token: the web UI asks for the token itself. Nil answers
 	// those paths with a JSON 404.
 	UI http.Handler
+	// IdentifyWorker, when set, turns workload identity on: it verifies a
+	// worker pod's projected ServiceAccount token (sandbox.Jobs.Identify)
+	// when the worker registers. Nil leaves workers on Token, for a worker
+	// outside Kubernetes against a server without the launcher.
+	IdentifyWorker func(ctx context.Context, token string) (sandbox.Identity, error)
 	// Sandboxes is the runtime the launcher starts worker sandboxes with,
 	// read for the sandbox routes. Nil means the launcher is off, and those
 	// routes get 503.
@@ -126,7 +138,20 @@ func New(cfg Config) http.Handler {
 	v1.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "not_found", "no route for "+r.Method+" "+r.URL.Path, nil)
 	})
-	mux.Handle("/api/v1/", h.authenticate(v1))
+
+	// The only routes a worker credential reaches.
+	workers := http.NewServeMux()
+	workers.HandleFunc("POST /api/v1/workers/{id}/heartbeat", h.heartbeat)
+	workers.HandleFunc("POST /api/v1/workers/{id}/claim", h.claimStep)
+	workers.HandleFunc("POST /api/v1/steps/{id}/stage", h.stepStage)
+	workers.HandleFunc("POST /api/v1/steps/{id}/result", h.stepResult)
+	workers.HandleFunc("POST /api/v1/steps/{id}/release", h.stepRelease)
+	workers.HandleFunc("POST /api/v1/work/{id}/codehost-token", h.codehostToken)
+	workers.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, r, http.StatusForbidden, "forbidden", "a worker credential may only heartbeat, claim, report on its own steps "+
+			"and get code host tokens for them; "+r.Method+" "+r.URL.Path+" is not one of those", nil)
+	})
+	mux.Handle("/api/v1/", h.authenticate(v1, workers))
 
 	return h.observe(mux)
 }
@@ -179,23 +204,65 @@ func (r *recorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// authenticate requires the bearer token when one is configured. Both sides
-// are hashed first so the comparison takes the same time whatever the length.
-func (h handlers) authenticate(next http.Handler) http.Handler {
-	if h.cfg.Token == "" {
-		return next
-	}
+// authenticate sends a request to people or, for a worker credential, to
+// workers. The shared token is required when one is configured; both sides
+// are hashed first so the comparison takes the same time whatever the
+// length. With workload identity on, a worker credential (work.CredentialPrefix)
+// is looked up, and any other bearer on POST /api/v1/workers is taken as a
+// pod's ServiceAccount token and verified.
+func (h handlers) authenticate(people, workers http.Handler) http.Handler {
 	want := sha256.Sum256([]byte(h.cfg.Token))
+	identity := h.cfg.IdentifyWorker != nil
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		presented, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		presented, hasBearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		hasBearer = hasBearer && presented != ""
 		got := sha256.Sum256([]byte(presented))
-		if !ok || subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
+		shared := h.cfg.Token != "" && hasBearer && subtle.ConstantTimeCompare(got[:], want[:]) == 1
+		switch {
+		case identity && hasBearer && strings.HasPrefix(presented, work.CredentialPrefix):
+			p, err := h.cfg.Work.WorkerByCredential(r.Context(), presented)
+			if errors.Is(err, work.ErrNotFound) {
+				writeError(w, r, http.StatusUnauthorized, "unauthorized", "the worker credential is unknown, was replaced by a newer pod's, "+
+					"or its worker was marked gone. A worker registers once per pod: let this sandbox end and the launcher start a new one", nil)
+				return
+			}
+			if err != nil {
+				h.fail(w, r, err)
+				return
+			}
+			workers.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+		case identity && hasBearer && !shared && r.Method == http.MethodPost && r.URL.Path == "/api/v1/workers":
+			h.registerPod(w, r, presented)
+		case shared || h.cfg.Token == "":
+			people.ServeHTTP(w, r)
+		default:
 			w.Header().Set("WWW-Authenticate", `Bearer realm="factory"`)
 			writeError(w, r, http.StatusUnauthorized, "unauthorized", "send the API token as \"Authorization: Bearer <token>\"", nil)
-			return
 		}
-		next.ServeHTTP(w, r)
 	})
+}
+
+type principalKey struct{}
+
+// actAs reports whether the caller may act as the worker workerID, and
+// answers the request when it may not. A worker credential acts only as its
+// own worker. Without one, the caller holds the shared token (or the server
+// has none), which acts as any worker unless workload identity is on.
+func (h handlers) actAs(w http.ResponseWriter, r *http.Request, workerID string) bool {
+	if p, ok := r.Context().Value(principalKey{}).(work.WorkerPrincipal); ok {
+		if workerID == p.ID {
+			return true
+		}
+		writeError(w, r, http.StatusForbidden, "forbidden", fmt.Sprintf("this credential is worker %s's; it cannot act for worker %q", p.ID, workerID), nil)
+		return false
+	}
+	if h.cfg.IdentifyWorker == nil {
+		return true
+	}
+	writeError(w, r, http.StatusForbidden, "workload_identity_required", "the shared API token cannot act as a worker while the launcher is on: "+
+		"a worker in the cluster registers with its pod's projected ServiceAccount token ("+sandbox.TokenPath+"). "+
+		"To run a worker outside Kubernetes, point it at a server without --launcher", nil)
+	return false
 }
 
 // doctor is GET /api/v1/admin/doctor: the server's version and its checks.
@@ -272,6 +339,8 @@ func (h handlers) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusConflict, "output_conflict", err.Error(), nil)
 	case errors.Is(err, work.ErrConfigUnavailable):
 		writeError(w, r, http.StatusServiceUnavailable, "config_unavailable", err.Error(), nil)
+	case errors.Is(err, work.ErrAlreadyRegistered):
+		writeError(w, r, http.StatusConflict, "already_registered", err.Error(), nil)
 	case errors.Is(err, work.ErrRepoNotAllowed):
 		writeError(w, r, http.StatusForbidden, "repo_not_allowed", err.Error(), nil)
 	default:

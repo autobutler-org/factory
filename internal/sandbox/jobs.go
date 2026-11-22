@@ -35,15 +35,15 @@ const (
 	WorkspaceDir    = "/workspace"
 	workspaceVolume = "workspace"
 
-	// Keys in the Secrets the worker's credentials come from.
-	apiTokenSecretKey = "token"
+	// The key in the Secret the model API key comes from.
 	modelKeySecretKey = "api-key"
 
-	// The projected ServiceAccount token for this audience is mounted for
-	// #15, which will verify it. It is not given to the worker as
-	// FACTORY_TOKEN_FILE yet: until then the worker sends the shared API
-	// token from FACTORY_API_TOKEN.
-	tokenAudience   = "factory"
+	// The worker registers with the projected ServiceAccount token for this
+	// audience (FACTORY_TOKEN_FILE), which the server verifies with a
+	// TokenReview (Identify). The pod gets no other factory credential.
+	tokenAudience = "factory"
+	// TokenPath is where the worker's projected token is mounted.
+	TokenPath       = tokenDir + "/" + tokenFile
 	tokenDir        = "/var/run/factory"
 	tokenFile       = "token"
 	tokenVolume     = "factory-token"
@@ -77,10 +77,6 @@ type JobsConfig struct {
 	// Resources are the worker container's requests and limits, including
 	// ephemeral-storage for clones and build output.
 	Resources corev1.ResourceRequirements
-	// APITokenSecret names a Secret in Namespace whose key "token" is the
-	// factory API bearer token, given to the worker as FACTORY_API_TOKEN.
-	// Empty gives the worker none.
-	APITokenSecret string
 	// ModelKeySecret names a Secret in Namespace whose key "api-key" is the
 	// model API key, given to the worker as ANTHROPIC_API_KEY. Empty gives
 	// the worker none.
@@ -89,8 +85,9 @@ type JobsConfig struct {
 
 // Jobs is a Runtime that runs each sandbox as a Kubernetes Job with one pod,
 // and execs into it through the Kubernetes exec API. It needs RBAC in its
-// namespace to create, get, list, and delete Jobs, list Pods, create
-// pods/exec, and get pods/log.
+// namespace to create, get, list, and delete Jobs, get and list Pods, create
+// pods/exec, and get pods/log, and, for Identify, create tokenreviews
+// (the ClusterRole system:auth-delegator).
 type Jobs struct {
 	client      kubernetes.Interface
 	cfg         JobsConfig
@@ -178,8 +175,9 @@ func (j *Jobs) job(name, key, image string) *batchv1.Job {
 		{Name: "FACTORY_WORK_DIR", Value: WorkspaceDir},
 		// The worker image installs Claude Code only.
 		{Name: "FACTORY_HARNESSES", Value: "claude-code"},
+		// The pod's own identity, sent once to register.
+		{Name: "FACTORY_TOKEN_FILE", Value: TokenPath},
 	}
-	env = append(env, secretEnv("FACTORY_API_TOKEN", j.cfg.APITokenSecret, apiTokenSecretKey)...)
 	env = append(env, secretEnv("ANTHROPIC_API_KEY", j.cfg.ModelKeySecret, modelKeySecretKey)...)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

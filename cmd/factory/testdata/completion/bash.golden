@@ -23,7 +23,7 @@ _factory() {
     "doctor" | "doctor "*) COMPREPLY=($(compgen -W "--harnesses --output --server --work-dir --worker" -- "$cur")) ;;
     "status" | "status "*) COMPREPLY=($(compgen -W "--output --server" -- "$cur")) ;;
     "worker" | "worker "*) COMPREPLY=($(compgen -W "--git-url --github-api-url --harnesses --sandbox --sandbox-key --token-file --url --work-dir" -- "$cur")) ;;
-    "serve" | "serve "*) COMPREPLY=($(compgen -W "--addr --database-url --github-api-url --github-app-id --github-app-key-file --launcher --launcher-allowed-images --launcher-api-token-secret --launcher-capabilities --launcher-image --launcher-limits --launcher-max-sandboxes --launcher-model-key-secret --launcher-namespace --launcher-node-selector --launcher-pending-timeout --launcher-poll-interval --launcher-requests --launcher-runtime-class --launcher-server-url --launcher-service-account --launcher-tolerations --lease --max-attempts --retry-delay --stuck-after" -- "$cur")) ;;
+    "serve" | "serve "*) COMPREPLY=($(compgen -W "--addr --database-url --github-api-url --github-app-id --github-app-key-file --launcher --launcher-allowed-images --launcher-capabilities --launcher-image --launcher-limits --launcher-max-sandboxes --launcher-model-key-secret --launcher-namespace --launcher-node-selector --launcher-pending-timeout --launcher-poll-interval --launcher-requests --launcher-runtime-class --launcher-server-url --launcher-service-account --launcher-tolerations --lease --max-attempts --retry-delay --stuck-after" -- "$cur")) ;;
     "work" | "work "*) COMPREPLY=($(compgen -W "enqueue list move show" -- "$cur")) ;;
     "") COMPREPLY=($(compgen -W "completion doctor migrate serve status version work worker workers" -- "$cur")) ;;
   esac

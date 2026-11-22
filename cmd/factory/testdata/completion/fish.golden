@@ -76,7 +76,6 @@ complete -c factory -n "__factory_at 'serve'" -l github-app-id
 complete -c factory -n "__factory_at 'serve'" -l github-app-key-file
 complete -c factory -n "__factory_at 'serve'" -l launcher
 complete -c factory -n "__factory_at 'serve'" -l launcher-allowed-images
-complete -c factory -n "__factory_at 'serve'" -l launcher-api-token-secret
 complete -c factory -n "__factory_at 'serve'" -l launcher-capabilities
 complete -c factory -n "__factory_at 'serve'" -l launcher-image
 complete -c factory -n "__factory_at 'serve'" -l launcher-limits

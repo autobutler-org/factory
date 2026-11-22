@@ -22,12 +22,14 @@ Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_GIT_URL):
   --sandbox-key STRING
       claim only this chain's steps (<item id>/<owner>/<repo>)
   --token-file FILE
-      file holding the bearer token, read on every request
+      file holding the pod's projected ServiceAccount token, sent once to
+      register; the server answers with the worker's credential
   --url URL
       the factory server URL (required)
   --work-dir DIRECTORY
       directory where checkouts live (default $TMPDIR/factory-worker)
 
 Environment:
-  FACTORY_API_TOKEN    bearer token when --token-file is not set
+  FACTORY_API_TOKEN    bearer token when --token-file is not set: for a worker
+                       outside Kubernetes, against a server without --launcher
 --- stderr

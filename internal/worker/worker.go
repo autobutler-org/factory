@@ -104,9 +104,16 @@ func Run(ctx context.Context, cfg Config) error {
 	for i, h := range cfg.Harnesses {
 		names[i] = h.Name()
 	}
-	id, err := cfg.Client.Register(ctx, cfg.Name, cfg.Version, names)
+	id, credential, err := cfg.Client.Register(ctx, cfg.Name, cfg.Version, names)
 	if err != nil {
 		return err
+	}
+	if credential != "" {
+		// From here on the worker is its credential, held only in memory; the
+		// pod's token is spent.
+		client := *cfg.Client
+		client.Token = func() (string, error) { return credential, nil }
+		cfg.Client = &client
 	}
 	_, lease, err := cfg.Client.Heartbeat(ctx, id)
 	if err != nil {

@@ -60,13 +60,26 @@ type WorkerInput struct {
 // RegisterWorker adds a worker, or refreshes the one with the same name and
 // makes it active again.
 func (s *Service) RegisterWorker(ctx context.Context, in WorkerInput) (db.Worker, error) {
+	params, err := in.params()
+	if err != nil {
+		return db.Worker{}, err
+	}
+	w, err := db.New(s.pool).RegisterWorker(ctx, params)
+	if err != nil {
+		return db.Worker{}, fmt.Errorf("register worker: %w", err)
+	}
+	return w, nil
+}
+
+// params checks a registration and encodes it.
+func (in WorkerInput) params() (db.RegisterWorkerParams, error) {
 	switch {
 	case in.Name == "":
-		return db.Worker{}, fmt.Errorf("%w: worker name is required", ErrInvalid)
+		return db.RegisterWorkerParams{}, fmt.Errorf("%w: worker name is required", ErrInvalid)
 	case in.Kind != WorkerCluster && in.Kind != WorkerLocal:
-		return db.Worker{}, fmt.Errorf("%w: worker kind must be cluster or local", ErrInvalid)
+		return db.RegisterWorkerParams{}, fmt.Errorf("%w: worker kind must be cluster or local", ErrInvalid)
 	case slices.Contains(in.Capabilities.all(), ""):
-		return db.Worker{}, fmt.Errorf("%w: capabilities must not contain an empty string", ErrInvalid)
+		return db.RegisterWorkerParams{}, fmt.Errorf("%w: capabilities must not contain an empty string", ErrInvalid)
 	}
 	caps := in.Capabilities
 	if caps.Harnesses == nil {
@@ -77,13 +90,9 @@ func (s *Service) RegisterWorker(ctx context.Context, in WorkerInput) (db.Worker
 	}
 	raw, err := json.Marshal(caps)
 	if err != nil {
-		return db.Worker{}, fmt.Errorf("encode capabilities: %w", err)
+		return db.RegisterWorkerParams{}, fmt.Errorf("encode capabilities: %w", err)
 	}
-	w, err := db.New(s.pool).RegisterWorker(ctx, db.RegisterWorkerParams{Name: in.Name, Kind: in.Kind, Capabilities: raw, Version: in.Version})
-	if err != nil {
-		return db.Worker{}, fmt.Errorf("register worker: %w", err)
-	}
-	return w, nil
+	return db.RegisterWorkerParams{Name: in.Name, Kind: in.Kind, Capabilities: raw, Version: in.Version}, nil
 }
 
 // WorkerView is a registered worker with what it holds now.

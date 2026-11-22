@@ -120,6 +120,12 @@ worker that holds either:
 - a live claim on I itself (a developer's local claim, see [workers.md](workers.md#the-item-protocol-local-claims))
   when I's `repos` contains R.
 
+Who the worker is comes from its credential, not from `worker_id`: with the launcher on, a cluster worker's credential
+is bound to its own worker, so a `worker_id` that is not its own is `403 forbidden` before this rule runs, and the
+shared API token is refused here with `403 workload_identity_required`
+([workload identity](workers.md#workload-identity)). A session in the sandbox cannot ask for a token without the
+worker's credential, which only the worker's memory holds.
+
 A worker that holds no claim on I gets `409 not_claimant`. One whose only step for R has an expired lease gets
 `409 lease_expired`. One whose claim does not cover R, such as a step for another repository of the same item, gets
 `403 repo_not_allowed`. The endpoint stays under the item, `/api/v1/work/{id}/codehost-token`, because both kinds of

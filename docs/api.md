@@ -1,7 +1,9 @@
 # HTTP API
 
 `factory serve` serves JSON over HTTP. Routes under `/api/v1` need `Authorization: Bearer <token>` when
-`FACTORY_API_TOKEN` is set (see [config.md](config.md)). Every other path outside `/healthz` and `/readyz` serves the
+`FACTORY_API_TOKEN` is set (see [config.md](config.md)). With the launcher on, cluster workers send their own
+credential instead and reach only the worker protocol
+([architecture/workers.md](architecture/workers.md#workload-identity)). Every other path outside `/healthz` and `/readyz` serves the
 web UI without the token: a file of the build when the path names one, otherwise `index.html`, so the UI's own routes
 (`/work/{id}`, `/workers`) load. The UI asks for the token and sends it on its API calls. Every response carries an `X-Request-ID` header; send one
 to have yours used instead.
@@ -176,7 +178,7 @@ Every error has the same shape:
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `malformed_request` | The body is not JSON, has unknown fields, or has trailing data. |
-| 401 | `unauthorized` | Missing or wrong bearer token. |
+| 401 | `unauthorized` | Missing or wrong bearer token, or a worker's ServiceAccount token or credential that was refused. |
 | 404 | `not_found` | No such route, item, dependency, step, or graph. |
 | 404 | `sandbox_not_found` | The item has no such sandbox: it ended and was removed, with its log. |
 | 409 | `illegal_transition` | The state machine forbids the move. Carries `current_state` and `allowed`. |
@@ -188,6 +190,8 @@ Every error has the same shape:
 | 409 | `not_waiting` | Completing a step that is not a wait step waiting for its event. |
 | 409 | `not_replannable` | Replanning an item that is not `in_progress` or `in_review`. |
 | 403 | `repo_not_allowed` | A code host token was asked for a repository the claim does not cover. |
+| 403 | `forbidden`, `workload_identity_required` | A worker credential acting outside its own worker and chain, or the shared token acting as a worker while the launcher is on; see [architecture/workers.md](architecture/workers.md#workload-identity). |
+| 409 | `already_registered` | A worker pod registering a second time. |
 | 503 | `sandboxes_not_configured` | A sandbox route on a server started without `--launcher`. |
 | 503 | `codehost_not_configured` | `POST /api/v1/work/{id}/codehost-token` on a server started without a GitHub App. |
 | 413 | `body_too_large` | The body is over 1 MiB. |

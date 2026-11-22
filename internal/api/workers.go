@@ -1,20 +1,28 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/autobutler-org/factory/internal/db"
+	"github.com/autobutler-org/factory/internal/sandbox"
 	"github.com/autobutler-org/factory/internal/work"
 )
 
+type registerRequest struct {
+	Name         string            `json:"name"`
+	Kind         string            `json:"kind"`
+	Capabilities work.Capabilities `json:"capabilities"`
+	Version      string            `json:"version"`
+}
+
 func (h handlers) registerWorker(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name         string            `json:"name"`
-		Kind         string            `json:"kind"`
-		Capabilities work.Capabilities `json:"capabilities"`
-		Version      string            `json:"version"`
-	}
+	var req registerRequest
 	if err := decode(r, &req); err != nil {
 		h.fail(w, r, err)
+		return
+	}
+	if !h.actAs(w, r, "") {
 		return
 	}
 	worker, err := h.cfg.Work.RegisterWorker(r.Context(), work.WorkerInput{Name: req.Name, Kind: req.Kind, Capabilities: req.Capabilities, Version: req.Version})
@@ -23,6 +31,41 @@ func (h handlers) registerWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, worker)
+}
+
+// registerPod is POST /api/v1/workers with a pod's projected ServiceAccount
+// token. The worker is named after its sandbox and bound to the sandbox's
+// key, whatever the body says; the reply carries the credential the worker
+// sends from then on, once.
+func (h handlers) registerPod(w http.ResponseWriter, r *http.Request, token string) {
+	id, err := h.cfg.IdentifyWorker(r.Context(), token)
+	if errors.Is(err, sandbox.ErrUnauthenticated) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="factory"`)
+		writeError(w, r, http.StatusUnauthorized, "unauthorized", err.Error()+". A worker in the cluster registers with the projected "+
+			"ServiceAccount token its Job mounts at "+sandbox.TokenPath+" (audience factory), read when it starts; "+
+			"a worker outside Kubernetes needs a server without --launcher and the shared FACTORY_API_TOKEN", nil)
+		return
+	}
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	var req registerRequest
+	if err := decode(r, &req); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	worker, credential, err := h.cfg.Work.RegisterPod(r.Context(), work.WorkerInput{Capabilities: req.Capabilities, Version: req.Version},
+		work.Pod{Sandbox: id.Sandbox, Key: id.Key, UID: id.PodUID})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	h.cfg.Logger.InfoContext(r.Context(), "worker pod registered", "worker_id", worker.ID, "sandbox", id.Sandbox, "pod", id.Pod, "sandbox_key", id.Key)
+	writeJSON(w, http.StatusOK, struct {
+		db.Worker
+		Credential string `json:"credential"`
+	}{worker, credential})
 }
 
 func (h handlers) listWorkers(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +87,9 @@ func (h handlers) status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h handlers) heartbeat(w http.ResponseWriter, r *http.Request) {
+	if !h.actAs(w, r, r.PathValue("id")) {
+		return
+	}
 	held, err := h.cfg.Work.Heartbeat(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.fail(w, r, err)
@@ -63,6 +109,17 @@ func (h handlers) claimStep(w http.ResponseWriter, r *http.Request) {
 			h.fail(w, r, err)
 			return
 		}
+	}
+	if !h.actAs(w, r, r.PathValue("id")) {
+		return
+	}
+	// A worker credential claims only from its own sandbox's chain.
+	if p, ok := r.Context().Value(principalKey{}).(work.WorkerPrincipal); ok {
+		if req.SandboxKey != "" && req.SandboxKey != p.SandboxKey {
+			writeError(w, r, http.StatusForbidden, "forbidden", "this worker serves sandbox key "+p.SandboxKey+"; it cannot claim from "+req.SandboxKey, nil)
+			return
+		}
+		req.SandboxKey = p.SandboxKey
 	}
 	claim, ok, err := h.cfg.Work.ClaimStep(r.Context(), r.PathValue("id"), req.SandboxKey)
 	switch {
@@ -91,6 +148,9 @@ func (h handlers) claimItem(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	if !h.actAs(w, r, req.WorkerID) {
+		return
+	}
 	h.respondItem(w, r)(h.cfg.Work.Claim(r.Context(), r.PathValue("id"), req.WorkerID))
 }
 
@@ -101,6 +161,9 @@ func (h handlers) release(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decode(r, &req); err != nil {
 		h.fail(w, r, err)
+		return
+	}
+	if !h.actAs(w, r, req.WorkerID) {
 		return
 	}
 	h.respondItem(w, r)(h.cfg.Work.Release(r.Context(), r.PathValue("id"), req.WorkerID, req.Reason))
@@ -116,6 +179,9 @@ func (h handlers) stage(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	if !h.actAs(w, r, req.WorkerID) {
+		return
+	}
 	h.respondItem(w, r)(h.cfg.Work.ReportStage(r.Context(), r.PathValue("id"), req.WorkerID, req.Stage, req.Outputs))
 }
 
@@ -123,6 +189,9 @@ func (h handlers) result(w http.ResponseWriter, r *http.Request) {
 	var req workerRequest
 	if err := decode(r, &req); err != nil {
 		h.fail(w, r, err)
+		return
+	}
+	if !h.actAs(w, r, req.WorkerID) {
 		return
 	}
 	h.respondItem(w, r)(h.cfg.Work.ReportResult(r.Context(), r.PathValue("id"), req.WorkerID,
@@ -145,6 +214,9 @@ func (h handlers) recordOutput(w http.ResponseWriter, r *http.Request) {
 	var out any
 	var err error
 	if req.WorkerID != "" {
+		if !h.actAs(w, r, req.WorkerID) {
+			return
+		}
 		out, err = h.cfg.Work.RecordWorkerOutput(r.Context(), id, req.WorkerID, req.OutputInput)
 	} else {
 		out, err = h.cfg.Work.RecordOutput(r.Context(), id, req.OutputInput, apiActor())
