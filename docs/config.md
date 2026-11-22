@@ -70,13 +70,14 @@ within 30 seconds and answered within 60, and shutdown waits up to 10 seconds fo
 ## `factory worker`
 
 Runs inside a worker sandbox; see [architecture/worker.md](architecture/worker.md). The Job sets `FACTORY_URL`,
-`FACTORY_SANDBOX` and `FACTORY_TOKEN_FILE`.
+`FACTORY_SANDBOX`, `FACTORY_TOKEN_FILE` and `FACTORY_CONTAINED`.
 
 | Flag | Environment | Default | Meaning |
 | --- | --- | --- | --- |
 | `--url` | `FACTORY_URL` | none, required | The factory server, for example `http://factory:8080`. |
 | `--token-file` | `FACTORY_TOKEN_FILE` | unset | The pod's projected ServiceAccount token, sent once to register; the worker uses the credential the server answers with from then on. |
 | none | `FACTORY_API_TOKEN` | unset | Bearer token when `--token-file` is not set: for a worker outside Kubernetes against a server without `--launcher`. |
+| `--contained` | `FACTORY_CONTAINED` | `false` | The worker has a container of its own, as in a sandbox Job (which sets it): refuse to start unless a child process cannot read the worker's memory, and kill every other process of the user before a git command gets a code host token ([the session boundary](architecture/worker.md#the-session-boundary)). Linux only. Never set it on a shared machine. |
 | `--sandbox` | `FACTORY_SANDBOX` | the host name | The worker's name: the sandbox it runs in. The same name registers as the same worker. |
 | `--sandbox-key` | `FACTORY_SANDBOX_KEY` | unset | Claim only this chain's steps (`<item id>/<owner>/<repo>`). |
 | `--work-dir` | `FACTORY_WORK_DIR` | `$TMPDIR/factory-worker` | Where checkouts live, one per sandbox key. |

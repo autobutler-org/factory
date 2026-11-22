@@ -158,7 +158,10 @@ and a new worker cannot register with an old server (it sends no shared token). 
 3. Rebuild every image built `FROM` the worker image, such as quark's, from the new release's tag, and push it under
    the same allowed prefix. A derived image still on the old base registers, ignores the credential it gets back, and
    is refused (`401`) on its first heartbeat; its chain uses up the step's attempts until the image is rebuilt.
-4. Turn the launcher back on. The first Job's log shows `registered`; `kubectl -n factory logs deployment/factory`
+4. Turn the launcher back on. A worker that logs `the session boundary does not hold` refuses to run sessions on
+   this runtime (for example a RuntimeClass that does not honor non-dumpable processes); remove
+   `launcher.runtimeClassName` or see [worker.md](architecture/worker.md#the-session-boundary). The first Job's log
+   shows `registered`; `kubectl -n factory logs deployment/factory`
    shows `worker pod registered` with the sandbox and pod.
 5. Delete the Secret `factory-workers/factory-worker-api-token`; nothing reads it any more.
 

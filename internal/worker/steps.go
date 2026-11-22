@@ -63,6 +63,11 @@ func (s *stepRun) root() (string, error) {
 	return filepath.Join(s.e.cfg.WorkDir, key), nil
 }
 
+// spec is the checkout of this step's repository under root.
+func (s *stepRun) spec(root, base, branch string) treeSpec {
+	return treeSpec{root: root, url: s.url(), base: base, branch: branch, token: s.token, gitBin: s.e.git, sweep: s.e.sweep}
+}
+
 func (s *stepRun) url() string {
 	return strings.TrimSuffix(s.e.cfg.GitURL, "/") + "/" + s.repo + ".git"
 }
@@ -86,7 +91,7 @@ func (s *stepRun) tree(ctx context.Context) (*tree, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openTree(ctx, treeSpec{root: root, url: s.url(), base: ws.Base, branch: ws.Branch, token: s.token})
+	return openTree(ctx, s.spec(root, ws.Base, ws.Branch))
 }
 
 // prepare opens the checkout and reads the repository's config from its
@@ -134,11 +139,11 @@ func (s *stepRun) workspace(ctx context.Context) outcome {
 	if err != nil {
 		return final(err)
 	}
-	base, err := defaultBranch(ctx, root, s.url(), s.token)
+	base, err := defaultBranch(ctx, s.spec(root, "", ""))
 	if err != nil {
 		return retry(err)
 	}
-	t, err := openTree(ctx, treeSpec{root: root, url: s.url(), base: base, branch: s.params.Branch, token: s.token})
+	t, err := openTree(ctx, s.spec(root, base, s.params.Branch))
 	if err != nil {
 		return retry(err)
 	}
@@ -244,7 +249,7 @@ func (s *stepRun) secretScan(ctx context.Context) outcome {
 	if err != nil {
 		return retry(err)
 	}
-	if err := t.scanSecrets(ctx); err != nil {
+	if _, err := t.scanSecrets(ctx); err != nil {
 		return pushFailure(err)
 	}
 	return succeeded(struct{}{})

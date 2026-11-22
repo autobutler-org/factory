@@ -165,6 +165,20 @@ test/db: ## Run every test, the database tests included, against Postgres (start
 test/e2e: ## Run the worker's end-to-end tests against Postgres (start it with make serve/postgres)
 	FACTORY_DATABASE_URL='$(TEST_DATABASE_URL)' $(GO) test -tags e2e -race -count=1 -run '^TestE2E' ./internal/worker
 
+# The session-boundary tests (#48) as the worker runs: a Linux test binary in the worker image, as uid 1000
+# with every capability dropped and tini as PID 1. The sweep kills every process of its user, so it only runs here.
+.PHONY: test/contained
+test/contained: ## Run the session-boundary tests in WORKER_IMAGE as uid 1000 with no capabilities (needs Docker)
+	if ! docker image inspect $(WORKER_IMAGE) >/dev/null 2>&1; then
+		echo "No image $(WORKER_IMAGE). Run \`make build/image/worker\` first, or set WORKER_IMAGE to a worker image."
+		exit 1
+	fi
+	mkdir -p build/contained
+	GOOS=linux GOARCH="$$(docker version --format '{{.Server.Arch}}')" CGO_ENABLED=0 $(GO) test -c -o build/contained/worker.test ./internal/worker
+	docker run --rm --init --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+		-e FACTORY_TEST_CONTAINED=1 -v "$(CURDIR)/build/contained:/t:ro" --entrypoint /t/worker.test $(WORKER_IMAGE) \
+		-test.v -test.run '^(TestProtectStopsASameUIDRead|TestOthersListsLiveProcesses|TestSweepKillsEveryOtherProcess)$$'
+
 .PHONY: test/golden
 test/golden: ## Rewrite the CLI's golden files (cmd/factory/testdata) from the current output; review the diff
 	UPDATE_GOLDEN=1 $(GO) test -count=1 ./cmd/factory

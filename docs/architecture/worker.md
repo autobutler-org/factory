@@ -89,18 +89,51 @@ the worker image, so its equivalent has not been checked.
 
 The sandbox is the boundary, not the session's permissions: the session runs in its own pod under Pod Security
 "restricted" (non-root, no capabilities, no privilege escalation), behind the worker egress policy
-([operations.md](../operations.md)), with a checkout it is free to break. It has no code host credential: the
-token goes to git per command and never into the session's environment or git config, so a `git push` from a
-session has nothing to authenticate with. Nothing a session does is pushed except by the worker, after the gate
-passes and the secret scan finds nothing, and a review session's changes are discarded.
+([operations.md](../operations.md)), with a checkout it is free to break. Nothing a session does is pushed except by
+the worker, after the secret scan finds nothing (and, for the pull request, after the gate passes), and a review
+session's changes are discarded.
 
-The pod holds no shared API token any more: the worker registers with its pod's ServiceAccount token, once, and
-the server binds the credential it answers with to this worker and this chain
-([workload identity](workers.md#workload-identity)), so nothing in the sandbox can act on another item. The token
-file is spent after registration. The session still runs as the same user as the worker, though, so a session that
-goes looking can read the worker's memory through `/proc/<pid>/mem`, or a git child's environment while it pushes,
-and act as the worker on its own chain, including asking for a code host token for its repository. The prompts tell
-a session not to push, and a review session not to edit; #48 closes the rest.
+### The session boundary
+
+The session and the gate run as the worker's children, as the same user, in the same container, so the boundary
+between them and the worker has to be built ([decision 0002](../decisions/0002-worker-credentials.md), #48). What a
+session or gate can reach, and what it cannot:
+
+| Credential | Reachable by a session? | Why |
+| --- | --- | --- |
+| The worker credential (API) | No | It is only in the worker's memory, and the worker is non-dumpable (`prctl(PR_SET_DUMPABLE, 0)`) from the start: without `CAP_SYS_PTRACE`, which the pod drops, a process of the same user cannot read its `/proc/<pid>/environ`, `mem` or `maps`, or ptrace it. |
+| The pod's ServiceAccount token file | Yes, but useless | A pod registers once; the server refuses the token after that ([workload identity](workers.md#workload-identity)). |
+| A code host token | No | Only git commands that talk to the remote get it, and only after the worker has killed every other process in the container and reset the clone (below). Code host API calls are made in the worker's own memory. |
+| The shared API token | No | No worker pod has it. |
+| The model API key | Yes, the session; not the gate's environment | A session calls the model API itself. See [credentials.md](credentials.md). |
+
+Before a git command carries a code host token (fetch, `ls-remote`, push), the worker:
+
+1. **Sweeps** (`--contained` only): `kill(-1, SIGKILL)` until no other process of its user is alive, except PID 1
+   (tini). This reaches what a session or gate left running, daemonized or in its own session, which a
+   process-group kill would miss. While git holds the token, nothing untrusted runs.
+2. **Resets the bare clone**: its config is rewritten to three lines, and its hooks, attributes, grafts, shallow file,
+   alternates and replace refs are removed, so nothing a session planted there runs or changes what git sees. The
+   remote URL is on the command line.
+3. **Runs git** by the absolute path it resolved before any session ran, with `core.hooksPath=/dev/null`, replace refs
+   off, no global or system config, `GIT_DIR` set, and `PATH` set to git's own directory and `/usr/bin:/bin`, so a
+   `git` a session puts in `~/.local/bin` (first on the image's `PATH`) never runs.
+
+Local git commands (status, add, commit) get no token, so whatever they run sees none; they also run with hooks off.
+The secret scan runs in the reset clone, after the sweep, against a base fetched again from the remote, on every
+commit the push sends (`base..head`, not the net change), and the push sends exactly the commit it scanned.
+
+At startup, with `--contained`, the worker starts a child the way it starts a session and has it read the worker's
+`environ` and open its `mem`; if either works (a kernel or runtime that does not honor non-dumpable, or a child with
+`CAP_SYS_PTRACE`), the worker refuses to start, with that reason in its log. It also refuses when the git binary or
+its directory is writable by its user. `make test/contained` runs these checks and the sweep in the worker image as
+uid 1000 with every capability dropped.
+
+What remains: a session can still do anything a session is for, including editing the code the gate runs, so the
+gate checks an honest session and the pull request's CI and review are the real gate. It can read and send out the
+model key. It can stop or kill the worker (same user), which loses the step, not a credential. git still parses
+objects the session wrote, with the token in its environment. The prompts tell a session not to push, and a review
+session not to edit.
 
 ## Credentials and environment
 
@@ -109,9 +142,10 @@ a session not to push, and a review session not to edit; #48 closes the rest.
   later call; the credential is held only in memory. Outside Kubernetes, against a server without the launcher, it
   sends `FACTORY_API_TOKEN` instead.
 - **Code host:** each step asks `POST /api/v1/work/{id}/codehost-token` for its repository and keeps the token fresh
-  with `codehost.RefreshingToken`. git receives it per command as an `http.extraHeader` in the environment
-  (`GIT_CONFIG_COUNT`), so it is never written to git config, disk, or logs, and never passed to a session. The
-  pre-push secret scan refuses a change that contains it.
+  with `codehost.RefreshingToken`. Only git commands that talk to the remote receive it, per command, as an
+  `http.extraHeader` in the environment (`GIT_CONFIG_COUNT`), after the sweep and the reset
+  ([the session boundary](#the-session-boundary)), so it is never written to git config, disk, or logs, and never
+  passed to a session. The pre-push secret scan refuses a change that contains it.
 - **Agent sessions** see only the base environment (`PATH`, `HOME`, locale, proxy and CA settings) plus `ANTHROPIC_*`,
   `CLAUDE_*` and `XAI_*`. **The gate and git** see only the base environment, with `HOME` and `TMPDIR` pointed at a
   scratch directory for the gate; the model API key never reaches them. Nothing named `FACTORY_*` reaches either.

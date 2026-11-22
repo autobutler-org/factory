@@ -177,6 +177,9 @@ func (j *Jobs) job(name, key, image string) *batchv1.Job {
 		{Name: "FACTORY_HARNESSES", Value: "claude-code"},
 		// The pod's own identity, sent once to register.
 		{Name: "FACTORY_TOKEN_FILE", Value: TokenPath},
+		// The pod is the worker's alone: keep sessions out of its memory and
+		// kill what they leave before any push (#48).
+		{Name: "FACTORY_CONTAINED", Value: "true"},
 	}
 	env = append(env, secretEnv("ANTHROPIC_API_KEY", j.cfg.ModelKeySecret, modelKeySecretKey)...)
 	return &batchv1.Job{

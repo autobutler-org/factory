@@ -290,7 +290,7 @@ func TestScanDiffReadsOnlyTheBranchsAddedLines(t *testing.T) {
 	git("mv", "legacy.txt", "moved.txt")
 	write("other.txt", "one\ntwo\n")
 	commit("rename and edit")
-	got, err := ScanDiff(t.Context(), dir, "main", nil)
+	got, err := ScanDiff(t.Context(), "", dir, "main", "HEAD", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestScanDiffReadsOnlyTheBranchsAddedLines(t *testing.T) {
 	credential := "plain-credential-token-value"
 	write("other.txt", "one\ntwo\ntoken "+installation+"\ncredential="+credential+"\nshort=abc\n")
 	commit("leak")
-	got, err = ScanDiff(t.Context(), dir, "main", []string{"", "abc", credential})
+	got, err = ScanDiff(t.Context(), "", dir, "main", "HEAD", []string{"", "abc", credential})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestScanDiffReadsOnlyTheBranchsAddedLines(t *testing.T) {
 	write("base-only.txt", "later "+installation+"\n")
 	commit("base moves on")
 	git("checkout", "-q", "job")
-	got, err = ScanDiff(t.Context(), dir, "main", nil)
+	got, err = ScanDiff(t.Context(), "", dir, "main", "HEAD", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,10 +334,46 @@ func TestScanDiffReadsOnlyTheBranchsAddedLines(t *testing.T) {
 	}
 }
 
+// TestScanDiffReadsEveryCommit finds a secret a commit adds even when a
+// later commit removes it: every commit is pushed, not the net change.
+func TestScanDiffReadsEveryCommit(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-c", "user.name=Dev", "-c", "user.email=dev@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "-A")
+		git("commit", "-q", "-m", "change")
+	}
+	git("init", "-q", "-b", "main")
+	write("one\n")
+	git("checkout", "-q", "-b", "job")
+	write("one\ntoken " + "gh" + "s_" + strings.Repeat("Q", 36) + "\n")
+	write("one\n")
+	got, err := ScanDiff(t.Context(), "", dir, "main", "HEAD", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Kind != KindGitHub || got[0].File != "a.txt" {
+		t.Fatalf("ScanDiff = %+v, want the token the first commit added and the second removed", got)
+	}
+}
+
 func TestScanDiffRequiresAKnownBase(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	if _, err := ScanDiff(t.Context(), t.TempDir(), "main", nil); err == nil {
+	if _, err := ScanDiff(t.Context(), "", t.TempDir(), "main", "HEAD", nil); err == nil {
 		t.Fatal("ScanDiff succeeded on a directory that is not a git worktree")
 	}
 }

@@ -1,8 +1,10 @@
 // Package secretscan finds credential-shaped literals in tracked files.
 //
-// [Scan] reads every tracked file. [ScanDiff] reads only the lines a branch
-// adds relative to its base, which is what the worker checks before a push:
-// a literal that is already on the base is not the job's to remove. ScanDiff
+// [Scan] reads every tracked file. [ScanDiff] reads only the lines each of a
+// branch's commits adds relative to its base, which is what the worker checks
+// before a push: every pushed commit, since a secret removed by a later commit
+// is still published, but not a literal already on the base, which is not
+// the job's to remove. ScanDiff
 // also refuses an exact match of a caller-supplied credential, such as the
 // job's installation token, which has no shape a pattern could match.
 //
@@ -110,7 +112,7 @@ func Scan(ctx context.Context, dir string) ([]Finding, error) {
 }
 
 func trackedFiles(ctx context.Context, dir string) ([]string, error) {
-	out, err := gitOutput(ctx, dir, "list tracked files", "ls-files", "-z")
+	out, err := gitOutput(ctx, "", dir, "list tracked files", "ls-files", "-z")
 	if err != nil {
 		return nil, err
 	}
@@ -125,20 +127,25 @@ func trackedFiles(ctx context.Context, dir string) ([]string, error) {
 	return names, nil
 }
 
-// ScanDiff reports credential-shaped literals on the lines HEAD adds
-// relative to base, in the git worktree at dir. Lines that are already on
-// base, including lines a rename carries over unchanged, are not read. A
+// ScanDiff reports credential-shaped literals on the lines each commit
+// reachable from head but not from base adds, in the git repository at dir
+// (a worktree or a bare repository), with the git binary at gitBin (empty
+// finds one on PATH). Every commit is read, not the net change, because every
+// commit is pushed: a secret one commit adds and a later one removes is still
+// found. Lines that are already on base, including lines a rename carries
+// over unchanged, are not read; a merge is read against its first parent. A
 // line containing factory:allow-secret is not reported for its shape. A
 // line containing any of credentials verbatim is reported as
 // [KindCredential] whatever the line says, and an empty or short credential
-// is ignored. The process environment is not scanned.
-func ScanDiff(ctx context.Context, dir, base string, credentials []string) ([]Finding, error) {
-	// The merge base, so commits base gained after the branch was cut are
-	// not read as the branch removing them. -a reads a binary file as text,
-	// as Scan does, and -M keeps a renamed file's old lines out of the diff.
-	out, err := gitOutput(ctx, dir, "diff the branch against its base",
+// is ignored. Replace refs are ignored. The process environment is not
+// scanned.
+func ScanDiff(ctx context.Context, gitBin, dir, base, head string, credentials []string) ([]Finding, error) {
+	// -a reads a binary file as text, as Scan does, and -M keeps a renamed
+	// file's old lines out of the diff.
+	out, err := gitOutput(ctx, gitBin, dir, "read the branch's commits",
 		"-c", "core.quotePath=false",
-		"diff", "--no-color", "--no-ext-diff", "--no-textconv", "-a", "-M", "-U0", base+"...HEAD")
+		"log", "--format=", "-p", "--diff-merges=first-parent", "--no-color", "--no-ext-diff", "--no-textconv",
+		"-a", "-M", "-U0", base+".."+head)
 	if err != nil {
 		return nil, err
 	}
@@ -229,10 +236,12 @@ func hunkStart(header []byte) int {
 
 // gitOutput runs git in dir and returns its standard output. what names the
 // step in an error.
-func gitOutput(ctx context.Context, dir, what string, args ...string) ([]byte, error) {
-	gitBin, err := findGit()
-	if err != nil {
-		return nil, err
+func gitOutput(ctx context.Context, gitBin, dir, what string, args ...string) ([]byte, error) {
+	if gitBin == "" {
+		var err error
+		if gitBin, err = findGit(); err != nil {
+			return nil, err
+		}
 	}
 	// The absolute binary, not PATH's first git: a test may prepend a wrapper
 	// that is not git. The environment is not the process environment, so a
@@ -243,6 +252,7 @@ func gitOutput(ctx context.Context, dir, what string, args ...string) ([]byte, e
 		"GIT_CONFIG_GLOBAL=" + os.DevNull,
 		"GIT_CONFIG_SYSTEM=" + os.DevNull,
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_NO_REPLACE_OBJECTS=1",
 	}
 	out, err := cmd.Output()
 	if err != nil {

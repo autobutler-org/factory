@@ -10,6 +10,13 @@
 // the pushed branch, so a step can land in a fresh sandbox with an empty
 // disk.
 //
+// Sessions and the gate run as the worker's children, as the same user, so
+// the worker keeps them away from its credentials itself: it is
+// non-dumpable, and with Config.Contained it checks that at startup and
+// kills every other process before git gets a code host token; git with a
+// token only runs in a clone reset to state the worker wrote (the session
+// boundary in docs/architecture/worker.md).
+//
 // The package does not decide what runs next (the server's graph does),
 // does not plan, and does not start sandboxes. cmd/factory parses the flags
 // and calls Run.
@@ -21,6 +28,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -29,8 +38,13 @@ import (
 	"github.com/autobutler-org/factory/internal/harness"
 )
 
-// releaseTimeout bounds the release of a step on shutdown.
-const releaseTimeout = 10 * time.Second
+const (
+	// releaseTimeout bounds the release of a step on shutdown.
+	releaseTimeout = 10 * time.Second
+	// checkTimeout bounds the startup check that a child cannot read the
+	// worker.
+	checkTimeout = 10 * time.Second
+)
 
 // errLost is the cancel cause of a step the heartbeat no longer lists.
 var errLost = errors.New("the heartbeat no longer lists the step")
@@ -60,6 +74,12 @@ type Config struct {
 	Output io.Writer
 	// Log is the worker's logger. Nil discards.
 	Log *slog.Logger
+	// Contained says the worker has a container of its own (a sandbox Job):
+	// Run then refuses to start unless a child cannot read its memory, and
+	// kills every other process in the container before any git command
+	// that carries a code host token. Never set it on a shared machine:
+	// that kill reaches every process of the user.
+	Contained bool
 }
 
 // current is the step being worked on, shared with the heartbeat.
@@ -100,6 +120,32 @@ func Run(ctx context.Context, cfg Config) error {
 	if len(cfg.Harnesses) == 0 {
 		return errors.New("no agent harness is configured; install claude or grok, or pass --harnesses")
 	}
+	// Before anything else runs: no session may read the worker's memory,
+	// where its credential and code host tokens live (#48).
+	if err := protect(); err != nil {
+		return err
+	}
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		return fmt.Errorf("git was not found on PATH (%w); install git", err)
+	}
+	if gitBin, err = filepath.Abs(gitBin); err != nil {
+		return fmt.Errorf("resolve git: %w", err)
+	}
+	var sweepFn func(context.Context) error
+	if cfg.Contained {
+		checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
+		err := checkProtected(checkCtx)
+		cancel()
+		if err == nil {
+			err = checkGit(gitBin)
+		}
+		if err != nil {
+			return fmt.Errorf("the session boundary does not hold, so no session is started: %w. "+
+				"Run the worker on a runtime that honors non-dumpable processes (docs/architecture/worker.md)", err)
+		}
+		sweepFn = sweep
+	}
 	names := make([]string, len(cfg.Harnesses))
 	for i, h := range cfg.Harnesses {
 		names[i] = h.Name()
@@ -127,7 +173,7 @@ func Run(ctx context.Context, cfg Config) error {
 	defer stopBeat()
 	go heartbeat(beatCtx, cfg.Client, id, max(lease/3, time.Second), cur, log)
 
-	e := &executor{cfg: cfg, workerID: id, exhausted: map[string]bool{}}
+	e := &executor{cfg: cfg, workerID: id, exhausted: map[string]bool{}, git: gitBin, sweep: sweepFn}
 	for {
 		claim, ok, err := cfg.Client.Claim(ctx, id, cfg.SandboxKey)
 		switch {
@@ -233,6 +279,12 @@ func (o outcome) report() Result {
 type executor struct {
 	cfg      Config
 	workerID string
+	// git is the absolute path of the git binary, resolved before any
+	// session ran, so a git a session puts on PATH is never run.
+	git string
+	// sweep kills every other process in the sandbox; nil when the worker
+	// is not contained.
+	sweep func(context.Context) error
 	// exhausted are the harnesses that hit their usage limit, by name.
 	exhausted map[string]bool
 }

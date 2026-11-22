@@ -11,6 +11,10 @@
 #      orphaned processes, which `factory worker` does not; factory is this
 #      image's binary at /usr/local/bin/factory, on PATH. The Job sets only the
 #      arguments (`worker`); do not change ENTRYPOINT or replace either binary.
+#      Run nothing else alongside the worker: before every push it kills every
+#      process of uid 1000 but itself and PID 1 (FACTORY_CONTAINED), and it
+#      refuses to start when git (/usr/bin/git) or its directory is writable
+#      by uid 1000.
 #   2. User: ends as USER 1000:1000 (numeric; the pod runs as non-root). HOME
 #      is /home/factory and /workspace exists, both writable by uid 1000.
 #      Anything a tool writes at run time (an SDK's own cache directory, say)
