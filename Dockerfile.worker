@@ -28,7 +28,7 @@
 #      so put every tool's bin directory on PATH and do not depend on files
 #      under HOME for the gate.
 #   4. Claude Code: keep the one installed here, headless-ready (onboarding
-#      done, updates off, ~/.claude.json and ~/.claude/settings.json under
+#      done, updates off, AI attribution off, ~/.claude.json and ~/.claude/settings.json under
 #      /home/factory). Do not reinstall it or move HOME.
 #
 # Minimal example:
@@ -130,13 +130,14 @@ ENV HOME=/home/factory \
     PATH=/home/factory/.local/bin:/home/factory/go/bin:/home/factory/.npm-global/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Claude Code from the official native installer, pinned, with updates off and
-# onboarding marked done for headless use. claude -p reads ANTHROPIC_API_KEY
+# onboarding marked done for headless use, and AI attribution off in commit and
+# pull request text (no repository we run accepts it). claude -p reads ANTHROPIC_API_KEY
 # from the environment at run time; no key is baked in.
 RUN set -eux; \
     curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"; \
     mkdir -p /home/factory/.claude; \
     echo '{"hasCompletedOnboarding": true}' > /home/factory/.claude.json; \
-    echo '{"env": {"DISABLE_AUTOUPDATER": "1"}}' > /home/factory/.claude/settings.json; \
+    echo '{"env": {"DISABLE_AUTOUPDATER": "1"}, "attribution": {"commit": "", "pr": "", "sessionUrl": false}, "includeCoAuthoredBy": false}' > /home/factory/.claude/settings.json; \
     claude --version
 # Set only after the install: it also blocks the installer.
 ENV DISABLE_UPDATES=1
