@@ -61,6 +61,7 @@ complete -c factory -n "__factory_at 'doctor'" -l work-dir
 complete -c factory -n "__factory_at 'doctor'" -l worker
 complete -c factory -n "__factory_at 'status'" -l output
 complete -c factory -n "__factory_at 'status'" -l server
+complete -c factory -n "__factory_at 'worker'" -l contained
 complete -c factory -n "__factory_at 'worker'" -l git-url
 complete -c factory -n "__factory_at 'worker'" -l github-api-url
 complete -c factory -n "__factory_at 'worker'" -l harnesses

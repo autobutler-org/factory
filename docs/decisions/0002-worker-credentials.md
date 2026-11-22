@@ -157,13 +157,18 @@ no-new-privileges --user 1000:1000` (kernel 6.12), a parent with `SECRET_TOKEN` 
 | dumpable (as `factory worker` ran) | `SECRET_TOKEN=s3cr3t` | read | read 16 bytes |
 | `PR_SET_DUMPABLE 0` | Permission denied | Permission denied | Permission denied |
 
-The tests in the implementation repeat this on every CI run (`internal/worker`, Linux only).
+The tests in the implementation repeat this on every CI run (`TestProtectStopsASameUIDRead`, Linux only), and
+`make test/contained` runs it with the sweep in the worker image under the same settings.
+`TestSessionCannotReachTheCodeHostToken` plants hooks, `core.hooksPath`, `credential.helper`, `core.askPass` and a
+`git` on `PATH` from a session; before the change the planted scripts recorded the token in 32 environments during
+one implement and open_pr, after it in none.
 
 ## Follow-ups
 
-- Run sessions and the gate in a second container (option (a)) if the cluster's runtime does not honor
-  non-dumpable, or to stop depending on the sweep.
-- A per-sandbox or proxied model key, so a session's copy is short-lived or useless outside its pod.
+- [#82](https://github.com/autobutler-org/factory/issues/82): run sessions and the gate in a second container
+  (option (a)) if the cluster's runtime does not honor non-dumpable, or to stop depending on the sweep.
+- [#81](https://github.com/autobutler-org/factory/issues/81): a per-sandbox or proxied model key, so a session's copy
+  is short-lived or useless outside its pod.
 
 ## Rollout
 

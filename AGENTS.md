@@ -61,6 +61,7 @@ comment so `make help` lists it.
 | `make test`      | `go test ./...`                                                               |
 | `make test/race` | the tests under the race detector, as CI runs them                            |
 | `make test/e2e`  | the worker's end-to-end tests (build tag `e2e`) against Postgres              |
+| `make test/contained` | the session-boundary tests in the worker image, as uid 1000 with no capabilities (needs Docker) |
 | `make test/golden` | rewrites the CLI's golden files in `cmd/factory/testdata` from current output |
 | `make check`     | `check/go` (`check/format`, `check/tidy`, `check/lint`, `check/sqlc`, `check/migrations`, `test`), `check/web` (ESLint, `tsc`, Prettier), then `test/web`; changes no files |
 | `make format`    | `golangci-lint fmt` (gci, gofumpt, goimports); rewrites files                 |

@@ -30,5 +30,10 @@ after registering, its worker credential in the worker's memory. It has no Kuber
 (`automountServiceAccountToken: false`, and the projected token's audience is not the API server's) and no shared
 API token. Code host tokens exist only in the worker's memory and in the git commands it runs.
 
-An agent session and the gate run in the same container, as the same user, as children of the worker. Which of
-these they can reach, and what keeps them from the rest, is in [worker.md](worker.md#what-a-session-may-do).
+An agent session and the gate run in the same container, as the same user, as children of the worker. They can
+read the token file (spent) and, the session, the model key. The worker credential and code host tokens are out of
+their reach: the worker is non-dumpable, and git gets a token only after every other process is killed and the
+clone is reset. The details and what remains are in [worker.md](worker.md#the-session-boundary).
+
+The model key is the one credential a session holds by design. It does not expire and works from anywhere, so a
+session that sends it out gives it away until it is rotated. A per-sandbox or proxied key is #81.

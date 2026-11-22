@@ -148,6 +148,7 @@ func TestJobsEnsureCreatesWorkerJob(t *testing.T) {
 		"FACTORY_WORK_DIR":    WorkspaceDir,
 		"FACTORY_HARNESSES":   "claude-code",
 		"FACTORY_TOKEN_FILE":  tokenDir + "/" + tokenFile,
+		"FACTORY_CONTAINED":   "true",
 		"ANTHROPIC_API_KEY":   "secret:factory-model-api-key/api-key",
 	} {
 		if env[k] != want {

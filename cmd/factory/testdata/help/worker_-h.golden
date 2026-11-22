@@ -8,7 +8,11 @@ time, run each, and report the result. Exits 0 when the server has nothing
 left to hand out. On SIGTERM the step in hand is released, which counts no
 attempt.
 
-Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_GIT_URL):
+Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_CONTAINED):
+  --contained
+      the worker has a container of its own (a sandbox Job): refuse to start
+      unless sessions cannot read it, and kill every other process before git
+      gets a code host token. Never on a shared machine
   --git-url URL
       base URL of clone URLs, <git-url>/<owner>/<repo>.git (default
       https://github.com)

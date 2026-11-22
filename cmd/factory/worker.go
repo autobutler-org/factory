@@ -43,6 +43,8 @@ func workerSetup(fs *flag.FlagSet) runner {
 	harnesses := fs.String("harnesses", "claude-code,grok", "agent CLIs to use, in order; those not installed or not logged in are skipped")
 	gitURL := fs.String("git-url", "https://github.com", "base `URL` of clone URLs, <git-url>/<owner>/<repo>.git")
 	githubAPI := fs.String("github-api-url", codehost.DefaultGitHubAPI, "GitHub REST API base `URL`")
+	contained := fs.Bool("contained", false, "the worker has a container of its own (a sandbox Job): refuse to start unless sessions cannot read it, "+
+		"and kill every other process before git gets a code host token. Never on a shared machine")
 	return func(ctx context.Context, _ []string, s streams) int {
 		stderr := s.err
 		if *workDir == "" {
@@ -93,8 +95,9 @@ func workerSetup(fs *flag.FlagSet) runner {
 			Host: func(repo string, tokens func(context.Context) (string, error)) codehost.Host {
 				return codehost.GitHub{API: *githubAPI, Repo: repo, Tokens: tokens}
 			},
-			Output: stderr,
-			Log:    logger,
+			Output:    stderr,
+			Log:       logger,
+			Contained: *contained,
 		})
 		if err != nil {
 			logger.Error("worker stopped", "err", err)

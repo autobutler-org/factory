@@ -106,7 +106,9 @@ func (c *cluster) create(action k8stesting.Action) (bool, runtime.Object, error)
 			Name:       env["FACTORY_SANDBOX"],
 			SandboxKey: env["FACTORY_SANDBOX_KEY"],
 			// FACTORY_WORK_DIR is /workspace, the pod's emptyDir; here a
-			// directory of the test's own.
+			// directory of the test's own. FACTORY_CONTAINED is not applied:
+			// its sweep would kill the test's own processes
+			// (make test/contained covers it).
 			WorkDir:   c.e.t.TempDir(),
 			Harnesses: []harness.Harness{&harness.ClaudeCode{Bin: filepath.Join(c.e.agentDir, "agent")}},
 			GitURL:    "file://" + c.e.origin,

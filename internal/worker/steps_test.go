@@ -103,7 +103,11 @@ func newFixture(t *testing.T, gate string) *fixture {
 	})
 	_, client := newRecorder(t, nil)
 	client.URL = serve(t, srv)
-	f.e = &executor{workerID: "w", exhausted: map[string]bool{}, cfg: Config{
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.e = &executor{workerID: "w", git: gitBin, exhausted: map[string]bool{}, cfg: Config{
 		Client:    client,
 		WorkDir:   t.TempDir(),
 		GitURL:    "file://" + f.origin,
