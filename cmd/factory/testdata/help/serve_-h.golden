@@ -51,6 +51,10 @@ Flags (each also read from FACTORY_<FLAG>, e.g. FACTORY_ADDR):
       destroy a sandbox still pending after this long (an image that will not
       pull, a pod that cannot be scheduled) and start a new one; 0 never does
       (default 10m0s)
+  --launcher-poll-interval DURATION
+      how often the launcher reads each open pull request of the items being
+      worked from the code host, to complete wait steps and record merges; one
+      GraphQL request per pull request (default 1m0s)
   --launcher-requests STRING
       cpu, memory and ephemeral-storage requests of the worker container
       (default cpu=1,memory=2Gi,ephemeral-storage=10Gi)

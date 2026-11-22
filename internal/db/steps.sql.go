@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 const cancelSteps = `-- name: CancelSteps :execrows
@@ -473,6 +474,64 @@ func (q *Queries) PickStep(ctx context.Context, arg PickStepParams) (PickStepRow
 	return i, err
 }
 
+const pollPulls = `-- name: PollPulls :many
+SELECT o.work_item_id, o.repo, o.branch, o.url,
+       s.id AS step_id, s.kind AS step_kind, s.key AS step_key, s.available_at AS ready_since
+FROM work_outputs o
+JOIN work_items w ON w.id = o.work_item_id AND w.state IN ('in_progress', 'in_review')
+LEFT JOIN work_graphs g ON g.work_item_id = w.id AND g.state = 'current'
+LEFT JOIN work_steps s ON s.graph_id = g.id AND s.state = 'ready' AND s.kind = ANY ($1::text[])
+     AND lower(s.params->>'repo') = lower(o.repo)
+     AND o.id = (SELECT max(n.id) FROM work_outputs n
+                 WHERE n.work_item_id = o.work_item_id AND n.kind = 'pull_request' AND lower(n.repo) = lower(o.repo))
+WHERE o.kind = 'pull_request' AND o.status = 'open'
+ORDER BY w.priority DESC, w.created_at, o.id
+`
+
+type PollPullsRow struct {
+	WorkItemID string     `json:"work_item_id"`
+	Repo       string     `json:"repo"`
+	Branch     string     `json:"branch"`
+	Url        string     `json:"url"`
+	StepID     *string    `json:"step_id"`
+	StepKind   *string    `json:"step_kind"`
+	StepKey    *string    `json:"step_key"`
+	ReadySince *time.Time `json:"ready_since"`
+}
+
+// The open pull requests of the items being worked, for the server's
+// poller, highest-priority item first. The newest pull request of each
+// repository carries the ready wait step of that repository's chain in the
+// item's current graph, if any; ready_since is when it started waiting.
+func (q *Queries) PollPulls(ctx context.Context, waitKinds []string) ([]PollPullsRow, error) {
+	rows, err := q.db.Query(ctx, pollPulls, waitKinds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PollPullsRow{}
+	for rows.Next() {
+		var i PollPullsRow
+		if err := rows.Scan(
+			&i.WorkItemID,
+			&i.Repo,
+			&i.Branch,
+			&i.Url,
+			&i.StepID,
+			&i.StepKind,
+			&i.StepKey,
+			&i.ReadySince,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const returnStep = `-- name: ReturnStep :one
 UPDATE work_steps
 SET state = 'ready', claimed_by = NULL, lease_expires_at = NULL,
@@ -657,7 +716,8 @@ func (q *Queries) SetStepStage(ctx context.Context, arg SetStepStageParams) (Wor
 
 const setStepState = `-- name: SetStepState :exec
 UPDATE work_steps
-SET state = $1, finished_at = CASE WHEN $1::text = 'skipped' THEN now() END
+SET state = $1, finished_at = CASE WHEN $1::text = 'skipped' THEN now() END,
+    available_at = CASE WHEN $1::text = 'ready' THEN now() ELSE available_at END
 WHERE id = $2
 `
 
@@ -666,7 +726,9 @@ type SetStepStateParams struct {
 	ID    string `json:"id"`
 }
 
-// The scheduler's move of a pending step to ready or skipped.
+// The scheduler's move of a pending step to ready or skipped. A step that
+// becomes ready is available from now, so available_at is when a wait step
+// started waiting.
 func (q *Queries) SetStepState(ctx context.Context, arg SetStepStateParams) error {
 	_, err := q.db.Exec(ctx, setStepState, arg.State, arg.ID)
 	return err

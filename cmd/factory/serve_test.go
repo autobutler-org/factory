@@ -40,6 +40,7 @@ func TestServeRefusesBeforeListening(t *testing.T) {
 		{name: "launcher without an image", args: []string{"--launcher", "--launcher-server-url", "http://f:8080"}, wantCode: 2, wantStderr: "--launcher-image"},
 		{name: "launcher without a server URL", args: []string{"--launcher", "--launcher-image", "w:1"}, wantCode: 2, wantStderr: "--launcher-server-url"},
 		{name: "launcher with no room", args: []string{"--launcher", "--launcher-image", "w:1", "--launcher-server-url", "http://f:8080", "--launcher-max-sandboxes", "0"}, wantCode: 2, wantStderr: "--launcher-max-sandboxes"},
+		{name: "launcher polling faster than it passes", args: []string{"--launcher", "--launcher-image", "w:1", "--launcher-server-url", "http://f:8080", "--launcher-poll-interval", "1s"}, wantCode: 2, wantStderr: "--launcher-poll-interval"},
 		{name: "bad toleration", args: []string{"--launcher-tolerations", "a=b"}, wantCode: 2, wantStderr: "--launcher-tolerations"},
 		{name: "bad resources", args: []string{"--launcher-limits", "gpu=1"}, wantCode: 2, wantStderr: "--launcher-limits"},
 		{name: "bad node selector", args: []string{"--launcher-node-selector", "novalue"}, wantCode: 2, wantStderr: "--launcher-node-selector"},

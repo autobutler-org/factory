@@ -409,7 +409,10 @@ func (s *Service) ReportStepResult(ctx context.Context, stepID, workerID string,
 }
 
 // CompleteWait completes a wait step (await_checks, await_approval) that is
-// waiting, as an adapter does when the event arrives.
+// waiting, as the server's poller or an adapter does when it sees the event.
+// Its step_completed event carries the result. A step that is no longer
+// waiting is ErrNotWaiting and nothing changes, so a second completer of the
+// same event (a poll and a webhook) has no effect.
 func (s *Service) CompleteWait(ctx context.Context, stepID string, r StepResult, actor Actor) (db.WorkStep, error) {
 	if err := r.validate(); err != nil {
 		return db.WorkStep{}, err
@@ -441,9 +444,12 @@ func (s *Service) finishStep(ctx context.Context, q *db.Queries, item db.WorkIte
 	if len(result) == 0 {
 		result = json.RawMessage("null")
 	}
-	if _, err := writeEvent(ctx, q, item.ID, actor, eventType, "", "", stepPayload(step, map[string]any{
-		"outcome": r.Outcome, "reason": r.Reason, "retryable": r.Retryable, "outputs": len(r.Outputs),
-	})); err != nil {
+	extra := map[string]any{"outcome": r.Outcome, "reason": r.Reason, "retryable": r.Retryable, "outputs": len(r.Outputs)}
+	if eventType == EventStepCompleted {
+		// What the completer observed, such as the checks it counted.
+		extra["result"] = result
+	}
+	if _, err := writeEvent(ctx, q, item.ID, actor, eventType, "", "", stepPayload(step, extra)); err != nil {
 		return db.WorkStep{}, err
 	}
 	switch {
@@ -594,4 +600,15 @@ func (s *Service) Replan(ctx context.Context, itemID string, actor Actor) (Graph
 		return err
 	})
 	return view, err
+}
+
+// PollPulls returns the open pull requests of the items being worked, for
+// the server's poller, highest-priority item first. The newest pull request
+// of each repository carries the ready wait step of its chain, if any.
+func (s *Service) PollPulls(ctx context.Context) ([]db.PollPullsRow, error) {
+	rows, err := db.New(s.pool).PollPulls(ctx, plan.WaitKinds())
+	if err != nil {
+		return nil, fmt.Errorf("list open pull requests: %w", err)
+	}
+	return rows, nil
 }

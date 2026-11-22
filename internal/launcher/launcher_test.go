@@ -397,8 +397,9 @@ func TestServerMerge(t *testing.T) {
 			if merge.State != plan.Succeeded || string(merge.Result) != tt.wantResult {
 				t.Fatalf("merge = %s %s, want succeeded %s", merge.State, merge.Result, tt.wantResult)
 			}
-			if !slices.Equal(asked, []string{"o/a"}) || !slices.Equal(host.Merged(), tt.wantMerged) {
-				t.Errorf("host asked for %v, merged %v; want o/a and %v", asked, host.Merged(), tt.wantMerged)
+			// The poll asks for the same repository's host.
+			if !slices.Equal(slices.Compact(asked), []string{"o/a"}) || !slices.Equal(host.Merged(), tt.wantMerged) {
+				t.Errorf("host asked for %v, merged %v; want only o/a and %v", asked, host.Merged(), tt.wantMerged)
 			}
 			if got := e.itemState(t, item.ID); got != tt.wantItem {
 				t.Errorf("item = %s, want %s", got, tt.wantItem)

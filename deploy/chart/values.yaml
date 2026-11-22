@@ -101,6 +101,9 @@ launcher:
   maxSandboxes: 4
   # Destroy a worker sandbox still pending after this long (image pull error, unschedulable); 0 never does.
   pendingTimeout: 10m
+  # How often the launcher reads each open pull request from GitHub to complete wait steps and record merges:
+  # one GraphQL request (one point) per open pull request per poll. At least 10s, the launcher's pass.
+  pollInterval: 1m
   # Capabilities the worker image registers (its usable harnesses). Items that require anything else are
   # neither planned nor given a sandbox.
   capabilities:

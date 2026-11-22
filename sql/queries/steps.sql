@@ -42,9 +42,12 @@ WHERE s.id = @id;
 SELECT * FROM work_steps WHERE id = @id FOR UPDATE;
 
 -- name: SetStepState :exec
--- The scheduler's move of a pending step to ready or skipped.
+-- The scheduler's move of a pending step to ready or skipped. A step that
+-- becomes ready is available from now, so available_at is when a wait step
+-- started waiting.
 UPDATE work_steps
-SET state = @state, finished_at = CASE WHEN @state::text = 'skipped' THEN now() END
+SET state = @state, finished_at = CASE WHEN @state::text = 'skipped' THEN now() END,
+    available_at = CASE WHEN @state::text = 'ready' THEN now() ELSE available_at END
 WHERE id = @id;
 
 -- name: PickStep :one
@@ -192,3 +195,20 @@ WHERE s.state = 'ready'
 ORDER BY w.priority DESC, w.created_at, w.id, s.position
 LIMIT 1
 FOR UPDATE OF w SKIP LOCKED;
+
+-- name: PollPulls :many
+-- The open pull requests of the items being worked, for the server's
+-- poller, highest-priority item first. The newest pull request of each
+-- repository carries the ready wait step of that repository's chain in the
+-- item's current graph, if any; ready_since is when it started waiting.
+SELECT o.work_item_id, o.repo, o.branch, o.url,
+       s.id AS step_id, s.kind AS step_kind, s.key AS step_key, s.available_at AS ready_since
+FROM work_outputs o
+JOIN work_items w ON w.id = o.work_item_id AND w.state IN ('in_progress', 'in_review')
+LEFT JOIN work_graphs g ON g.work_item_id = w.id AND g.state = 'current'
+LEFT JOIN work_steps s ON s.graph_id = g.id AND s.state = 'ready' AND s.kind = ANY (@wait_kinds::text[])
+     AND lower(s.params->>'repo') = lower(o.repo)
+     AND o.id = (SELECT max(n.id) FROM work_outputs n
+                 WHERE n.work_item_id = o.work_item_id AND n.kind = 'pull_request' AND lower(n.repo) = lower(o.repo))
+WHERE o.kind = 'pull_request' AND o.status = 'open'
+ORDER BY w.priority DESC, w.created_at, o.id;

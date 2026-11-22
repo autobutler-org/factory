@@ -36,7 +36,8 @@ sequenceDiagram
     W->>F: POST /api/v1/steps/{step}/result {worker_id, outcome, result, outputs}
     F-->>W: 200 step; the next steps of the graph become ready in the same transaction
     Note over F: the chain reaches await_checks: no worker is handed it
-    A->>F: POST /api/v1/steps/{wait step}/complete {outcome, result}
+    Note over F: the launcher's poller reads the pull request and completes the wait step
+    A->>F: or POST /api/v1/steps/{wait step}/complete {outcome, result}
     F-->>A: 200 step; the chain continues
 ```
 
@@ -118,7 +119,8 @@ The body is optional: `{"sandbox_key": "b2e9.../autobutler-org/quark"}` restrict
 
 ### Complete a wait step: `POST /api/v1/steps/{id}/complete`
 
-For adapters (#7) and operators, not workers: the event an `await_checks` or `await_approval` step waits for.
+For operators and a future webhook adapter (#7), not workers: the event an `await_checks` or `await_approval` step
+waits for. The launcher's poller completes them on its own ([below](#polling-the-code-host)).
 
 ```json
 {"outcome": "succeeded", "result": {"verdict": "pass"}, "reason": "", "retryable": false, "outputs": []}
@@ -168,7 +170,9 @@ gets `403 repo_not_allowed`, and a server without a GitHub App gets `503 codehos
 In the cluster, `factory serve --launcher` starts the workers (`internal/launcher`). Every 10 seconds, one replica at
 a time (a Postgres advisory lock), it:
 
-1. **Runs server-side steps.** A step with no sandbox key that is not a wait step (today only `merge`) is never
+1. **Polls the code host**, at most every `--launcher-poll-interval` (default one minute), with a GitHub App: see
+   [Polling the code host](#polling-the-code-host).
+2. **Runs server-side steps.** A step with no sandbox key that is not a wait step (today only `merge`) is never
    handed to a sandbox. The server claims it through the step protocol as its own worker, `factory-server`
    (`work.Service.ClaimServerStep`), runs it with the code host and reports the result with
    `ReportStepResult`, so it writes the same `step_claimed` and `step_result_reported` events, counts attempts and
@@ -179,21 +183,21 @@ a time (a Postgres advisory lock), it:
    output open for the adapter (#7) to record when the queue lands it; otherwise it merges and records the output
    `merged`. A code host error is a retryable failure. Without a GitHub App this step is skipped, with a warning
    at startup, and `merge` steps stay `ready`.
-2. **Plans ready items** while there is room under `--launcher-max-sandboxes` (`work.Service.StartReady`), whose
+3. **Plans ready items** while there is room under `--launcher-max-sandboxes` (`work.Service.StartReady`), whose
    requirements are all in `--launcher-capabilities`. A sandbox's worker claims only its own chain and never plans
    an item, so the server does it. With a GitHub App it first reads each repository's `.factory/config.toml` at its
    default branch through the code host and plans with it ([config.md](../config.md#factoryconfigtoml)): a missing or
    invalid config, or a disallowed image, blocks the item; a code host outage leaves it `ready` until the retry
    delay passes. The `planned` event (with the config's commit and image per repository) and the move to
    `in_progress` are recorded with the actor `system/launcher`.
-3. **Starts one sandbox per chain** (`sandbox.Reconcile`): every sandbox key with a ready, available, non-wait step
+4. **Starts one sandbox per chain** (`sandbox.Reconcile`): every sandbox key with a ready, available, non-wait step
    and no running step (`work.Service.RunnableSandboxes`) that has no live (pending or running) sandbox gets a new
    Job named `worker-<12 random characters>`, up to the cap, highest-priority item first. A chain waiting on an event
    or a retry delay gets none. The Job runs the image the chain's repository named (`image` in its config, carried
    on the chain's `workspace` step params, `work.Service.SandboxImage`), or `--launcher-image` when it named none.
    The image is checked against `--launcher-allowed-images` again here, before it runs: one no longer allowed
    blocks the item with the reason and starts nothing. It never falls back to the default image.
-4. **Stops a live sandbox only when its chain has nothing left**: no step of its sandbox key is pending, ready or
+5. **Stops a live sandbox only when its chain has nothing left**: no step of its sandbox key is pending, ready or
    running (`work.Service.EndIdleSandbox`). The check and the Job's deletion happen under the item's row lock, which
    every claim takes, so a sandbox whose worker holds a step is never stopped. Normally the worker has exited
    already; this cleans up after one that hangs. A sandbox still pending after `--launcher-pending-timeout`
@@ -202,6 +206,44 @@ a time (a Postgres advisory lock), it:
 
 Ended Jobs are left for Kubernetes to delete an hour after they finish (`ttlSecondsAfterFinished`), so their logs
 stay readable; they do not count against the cap.
+
+### Polling the code host
+
+The cluster has no public address, so GitHub's webhooks cannot reach it; the launcher asks instead. A poll reads
+every open pull request output of the items in `in_progress` or `in_review` (`work.Service.PollPulls`), highest
+priority first, with one `codehost.Host.PullStatus` request each ([codehost.md](codehost.md#pull-request-status)),
+and acts on what it sees. Each change is made as the actor `system/poller`, and its event says what the poller saw.
+
+| Observed | Action |
+| --- | --- |
+| The head commit's counted checks all finished and passed | completes the ready `await_checks` with `{"verdict": "pass"}` |
+| A counted check failed | completes it at once with `{"verdict": "fail", "failed_checks": [names]}`, so `fix-checks` runs; on the last round the item fails |
+| A counted check is still running, or a required one has not reported | nothing |
+| No check at all on the head commit | nothing for two minutes from when the step became ready or the head was committed, whichever is later; then a pass, so a repository without CI does not wait forever |
+| The pull request is approved (GitHub's review decision; with no review rule, an approval and no change request) | completes the ready `await_approval` |
+
+- **Which checks count.** The base branch's required checks, from branch protection and rulesets, matched by name;
+  a required check that has not reported yet is pending. When none is required (or protection cannot be read),
+  every check on the head commit counts. Check runs and commit statuses both count.
+- **Only the head counts.** Checks are read from the pull request's current head commit, so a result from before a
+  `fix-checks` push, or from before a person's push, is ignored. Each `await_checks` result records the `head` it
+  was decided on and the `checks` that counted.
+- **Which step.** The ready wait step of the chain whose repository the pull request is in, beside the newest pull
+  request recorded for that repository.
+- **One writer.** The poll runs inside the pass's advisory lock. Completions go through
+  `work.Service.CompleteWait`, which accepts a wait step only while it is `ready`, so a second completer of the same
+  event (a webhook adapter, #7, or an operator) gets `ErrNotWaiting` and changes nothing.
+- **Errors.** A pull request the code host cannot answer for (an outage, a revoked installation, a rate limit) is
+  logged with GitHub's message and polled again next time; the others are still polled.
+
+**Cost.** One GraphQL request, one point of the installation's GraphQL rate limit (at least 5,000 points an hour,
+separate from the REST limit the workers mostly use), per open pull request per poll. 50 items in review, one pull
+request each, at the default one-minute interval is 3,000 points an hour, 60% of the smallest limit; at 30 seconds
+it would be 6,000 and run out, so the interval may not be shorter than the 10 second pass and should stay at a
+minute unless the installation's limit is larger. The server keeps one installation token per repository and mints
+another only when it nears expiry (about two App requests per repository an hour). Each replica keeps its own
+interval, so two replicas with the launcher on poll twice as often. GraphQL has no conditional requests, so a poll
+of an unchanged pull request still costs its point.
 
 ### Reading a sandbox's log
 

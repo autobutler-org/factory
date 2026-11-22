@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/autobutler-org/factory/internal/codehost"
@@ -22,13 +23,18 @@ import (
 // launcherInterval is how often the launcher passes.
 const launcherInterval = 10 * time.Second
 
+// checksGrace is how long an await_checks step waits on a head commit with
+// no checks reported before it passes, for a repository without CI. CI that
+// reports at all reports a queued check within seconds of a push.
+const checksGrace = 2 * time.Minute
+
 // launcherFlags are factory serve's launcher settings, as parsed.
 type launcherFlags struct {
 	enabled                                   *bool
 	namespace, image, serverURL               *string
 	allowedImages                             *string
 	maxSandboxes                              *int
-	pendingTimeout                            *time.Duration
+	pendingTimeout, pollInterval              *time.Duration
 	capabilities, serviceAccount              *string
 	nodeSelector, tolerations                 *string
 	requests, limits                          *string
@@ -44,6 +50,7 @@ func addLauncherFlags(fs *flag.FlagSet) launcherFlags {
 		allowedImages:  fs.String("launcher-allowed-images", "", "comma-separated image repository prefixes, such as ghcr.io/autobutler-org/, a repository's image (image in .factory/config.toml) may come from; a prefix without a trailing / is one repository. Empty lets no repository choose its image"),
 		maxSandboxes:   fs.Int("launcher-max-sandboxes", 4, "most worker sandboxes alive at once"),
 		pendingTimeout: fs.Duration("launcher-pending-timeout", 10*time.Minute, "destroy a sandbox still pending after this long (an image that will not pull, a pod that cannot be scheduled) and start a new one; 0 never does"),
+		pollInterval:   fs.Duration("launcher-poll-interval", time.Minute, "how often the launcher reads each open pull request of the items being worked from the code host, to complete wait steps and record merges; one GraphQL request per pull request"),
 		capabilities:   fs.String("launcher-capabilities", "claude-code", "comma-separated capabilities the worker image registers; items requiring others are left alone"),
 		serviceAccount: fs.String("launcher-service-account", "factory-worker", "ServiceAccount `name` of worker pods"),
 		nodeSelector:   fs.String("launcher-node-selector", "", "key=value,... node selector for worker pods"),
@@ -81,6 +88,8 @@ func (f launcherFlags) jobsConfig() (sandbox.JobsConfig, error) {
 			return sandbox.JobsConfig{}, errors.New("--launcher needs --launcher-image, the worker image to run")
 		case *f.serverURL == "":
 			return sandbox.JobsConfig{}, errors.New("--launcher needs --launcher-server-url, the URL workers reach this server at")
+		case *f.pollInterval < launcherInterval:
+			return sandbox.JobsConfig{}, fmt.Errorf("--launcher-poll-interval must be at least %s, the launcher's pass; each poll costs one GitHub request per open pull request", launcherInterval)
 		case *f.pendingTimeout < 0:
 			return sandbox.JobsConfig{}, errors.New("--launcher-pending-timeout must not be negative; 0 turns the timeout off")
 		case *f.maxSandboxes < 1:
@@ -132,21 +141,28 @@ func (f launcherFlags) newLauncher(rt sandbox.Runtime, svc *work.Service, pool *
 	return &launcher.Launcher{
 		Work: svc, Pool: pool, Runtime: rt, MaxSandboxes: *f.maxSandboxes, Host: host,
 		Capabilities: splitList(*f.capabilities), AllowedImages: splitList(*f.allowedImages),
-		PendingTimeout: *f.pendingTimeout, Logger: logger,
+		PendingTimeout: *f.pendingTimeout, PollInterval: *f.pollInterval, ChecksGrace: checksGrace, Logger: logger,
 	}
 }
 
-// githubHost returns the code host for a repository, with a token minted for
-// it, or nil when mintToken is (no GitHub App).
+// githubHost returns the code host for a repository, or nil when mintToken
+// is (no GitHub App). It keeps one token per repository, minted on first use
+// and again when it nears expiry, so the poller's read of every open pull
+// request does not mint a token each time.
 func githubHost(mintToken func(context.Context, string) (codehost.Token, error), githubAPI string) func(context.Context, string) (codehost.Host, error) {
 	if mintToken == nil {
 		return nil
 	}
-	return func(ctx context.Context, repo string) (codehost.Host, error) {
-		token, err := mintToken(ctx, repo)
-		if err != nil {
-			return nil, err
+	var mu sync.Mutex
+	tokens := map[string]*codehost.RefreshingToken{}
+	return func(_ context.Context, repo string) (codehost.Host, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		t, ok := tokens[repo]
+		if !ok {
+			t = &codehost.RefreshingToken{Fetch: func(ctx context.Context) (codehost.Token, error) { return mintToken(ctx, repo) }}
+			tokens[repo] = t
 		}
-		return codehost.GitHub{API: githubAPI, Repo: repo, Token: token.Token}, nil
+		return codehost.GitHub{API: githubAPI, Repo: repo, Tokens: t.Get}, nil
 	}
 }

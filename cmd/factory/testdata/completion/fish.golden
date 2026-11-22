@@ -85,6 +85,7 @@ complete -c factory -n "__factory_at 'serve'" -l launcher-model-key-secret
 complete -c factory -n "__factory_at 'serve'" -l launcher-namespace
 complete -c factory -n "__factory_at 'serve'" -l launcher-node-selector
 complete -c factory -n "__factory_at 'serve'" -l launcher-pending-timeout
+complete -c factory -n "__factory_at 'serve'" -l launcher-poll-interval
 complete -c factory -n "__factory_at 'serve'" -l launcher-requests
 complete -c factory -n "__factory_at 'serve'" -l launcher-runtime-class
 complete -c factory -n "__factory_at 'serve'" -l launcher-server-url

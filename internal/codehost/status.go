@@ -45,9 +45,9 @@ type PullStatus struct {
 // Check is one check run or commit status on a commit, by its name (a
 // status's context).
 type Check struct {
-	Name string
+	Name string `json:"name"`
 	// State is CheckPending, CheckPassed or CheckFailed.
-	State string
+	State string `json:"state"`
 }
 
 // pullStatusQuery reads a pull request's state, reviews, the base branch's
