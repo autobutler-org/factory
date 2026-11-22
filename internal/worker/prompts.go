@@ -54,7 +54,7 @@ func brief(item Item, repo, gate string) string {
 %s
 Make the change the work item asks for, with tests where the repository expects them. Follow the repository's own conventions (README, CONTRIBUTING, agent instruction files). Stay inside this directory. Do not commit, push or open a pull request: that is done for you once the repository's gate command passes. The gate command is: %s
 
-When you are done, write the pull request text to %s: the title on the first line, following the repository's commit and pull request title conventions, then a blank line, then the body, following the repository's pull request template if it has one.
+When you are done, write the pull request text to %s: the title on the first line, following the repository's commit and pull request title conventions, then a blank line, then the body, following the repository's pull request template if it has one. Put no AI attribution in it: no generated-by footer, no co-author trailer for an AI, and no session link.
 
 %s
 `, task(item, repo), gate, prTextPath, blockedNote)
