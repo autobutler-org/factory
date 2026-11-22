@@ -80,11 +80,13 @@ func (r StepResult) validate() error {
 	return validateOutputs(r.Outputs)
 }
 
-// GraphView is a graph with its steps, in plan order, and its edges.
+// GraphView is a graph with its steps, in plan order, its edges, and the
+// gate outputs kept for its steps (PutStepOutput).
 type GraphView struct {
-	Graph db.WorkGraph      `json:"graph"`
-	Steps []db.WorkStep     `json:"steps"`
-	Edges []db.WorkStepEdge `json:"edges"`
+	Graph       db.WorkGraph      `json:"graph"`
+	Steps       []db.WorkStep     `json:"steps"`
+	Edges       []db.WorkStepEdge `json:"edges"`
+	StepOutputs []StepOutputInfo  `json:"step_outputs"`
 }
 
 // active says whether an item is being worked by its graph.
@@ -563,7 +565,15 @@ func graphView(ctx context.Context, q *db.Queries, graph db.WorkGraph) (GraphVie
 	if err != nil {
 		return GraphView{}, fmt.Errorf("list edges: %w", err)
 	}
-	return GraphView{Graph: graph, Steps: steps, Edges: edges}, nil
+	rows, err := q.ListStepOutputs(ctx, graph.ID)
+	if err != nil {
+		return GraphView{}, fmt.Errorf("list step outputs: %w", err)
+	}
+	outputs := make([]StepOutputInfo, len(rows))
+	for i, r := range rows {
+		outputs[i] = StepOutputInfo(r)
+	}
+	return GraphView{Graph: graph, Steps: steps, Edges: edges, StepOutputs: outputs}, nil
 }
 
 // Replan plans an item that is being worked again, after a template or

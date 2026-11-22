@@ -1,4 +1,4 @@
-// Package apiclient sends JSON requests to a factory server's HTTP API
+// Package apiclient sends requests, JSON or a raw body, to a factory server's HTTP API
 // (docs/api.md) and turns its error replies into *Error values. The worker's
 // protocol client and the operator CLI both use it. It knows the routes'
 // shapes but no state rules, and it never retries.
@@ -55,25 +55,34 @@ type Client struct {
 // the headers in header, and decodes a 200 or 201 reply into out when out is
 // not nil. ok is false for a 204. Any other status is an *Error.
 func (c *Client) Call(ctx context.Context, method, path string, header http.Header, in, out any) (ok bool, err error) {
+	if in == nil {
+		return c.Send(ctx, method, path, header, "", nil, out)
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		return false, err
+	}
+	return c.Send(ctx, method, path, header, "application/json", data, out)
+}
+
+// Send is Call with a body that is not JSON: body as it is, sent as
+// contentType when body is not nil.
+func (c *Client) Send(ctx context.Context, method, path string, header http.Header, contentType string, body []byte, out any) (ok bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	var body io.Reader
-	if in != nil {
-		data, err := json.Marshal(in)
-		if err != nil {
-			return false, err
-		}
-		body = bytes.NewReader(data)
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(c.URL, "/")+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(c.URL, "/")+path, reader)
 	if err != nil {
 		return false, fmt.Errorf("%s %s: %w", method, path, err)
 	}
 	for k, v := range header {
 		req.Header[k] = v
 	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if body != nil && contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	if c.Token != nil {
 		token, err := c.Token()

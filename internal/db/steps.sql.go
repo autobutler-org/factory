@@ -201,6 +201,22 @@ func (q *Queries) GetStepForUpdate(ctx context.Context, id string) (WorkStep, er
 	return i, err
 }
 
+const getStepOutput = `-- name: GetStepOutput :one
+SELECT output, created_at FROM step_outputs WHERE step_id = $1
+`
+
+type GetStepOutputRow struct {
+	Output    []byte    `json:"output"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (q *Queries) GetStepOutput(ctx context.Context, stepID string) (GetStepOutputRow, error) {
+	row := q.db.QueryRow(ctx, getStepOutput, stepID)
+	var i GetStepOutputRow
+	err := row.Scan(&i.Output, &i.CreatedAt)
+	return i, err
+}
+
 const incrementStepAttempts = `-- name: IncrementStepAttempts :one
 UPDATE work_steps SET attempts = attempts + 1 WHERE id = $1 RETURNING id, graph_id, position, key, kind, params, sandbox_key, condition, state, attempts, claimed_by, lease_expires_at, stage, stage_reported_at, available_at, result, started_at, finished_at
 `
@@ -341,6 +357,40 @@ func (q *Queries) ListEdges(ctx context.Context, graphID string) ([]WorkStepEdge
 	for rows.Next() {
 		var i WorkStepEdge
 		if err := rows.Scan(&i.StepID, &i.DependsOnID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStepOutputs = `-- name: ListStepOutputs :many
+SELECT o.step_id, octet_length(o.output)::bigint AS bytes, o.created_at FROM step_outputs o
+JOIN work_steps s ON s.id = o.step_id
+WHERE s.graph_id = $1
+ORDER BY s.position
+`
+
+type ListStepOutputsRow struct {
+	StepID    string    `json:"step_id"`
+	Bytes     int64     `json:"bytes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// What is kept of the outputs of a graph's steps, without the output itself.
+func (q *Queries) ListStepOutputs(ctx context.Context, graphID string) ([]ListStepOutputsRow, error) {
+	rows, err := q.db.Query(ctx, listStepOutputs, graphID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStepOutputsRow{}
+	for rows.Next() {
+		var i ListStepOutputsRow
+		if err := rows.Scan(&i.StepID, &i.Bytes, &i.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -530,6 +580,44 @@ func (q *Queries) PollPulls(ctx context.Context, waitKinds []string) ([]PollPull
 		return nil, err
 	}
 	return items, nil
+}
+
+const pruneStepOutputs = `-- name: PruneStepOutputs :execrows
+DELETE FROM step_outputs WHERE created_at < $1
+`
+
+// Deletes the outputs stored before @before.
+func (q *Queries) PruneStepOutputs(ctx context.Context, before time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneStepOutputs, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const putStepOutput = `-- name: PutStepOutput :one
+INSERT INTO step_outputs (step_id, output) VALUES ($1, $2)
+ON CONFLICT (step_id) DO UPDATE SET output = excluded.output, created_at = now()
+RETURNING step_id, octet_length(output)::bigint AS bytes, created_at
+`
+
+type PutStepOutputParams struct {
+	StepID string `json:"step_id"`
+	Output []byte `json:"output"`
+}
+
+type PutStepOutputRow struct {
+	StepID    string    `json:"step_id"`
+	Bytes     int64     `json:"bytes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Keeps a gate run's output for the step, replacing an earlier run's.
+func (q *Queries) PutStepOutput(ctx context.Context, arg PutStepOutputParams) (PutStepOutputRow, error) {
+	row := q.db.QueryRow(ctx, putStepOutput, arg.StepID, arg.Output)
+	var i PutStepOutputRow
+	err := row.Scan(&i.StepID, &i.Bytes, &i.CreatedAt)
+	return i, err
 }
 
 const returnStep = `-- name: ReturnStep :one

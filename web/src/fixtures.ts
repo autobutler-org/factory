@@ -133,6 +133,9 @@ export const failedItem = {
     },
     steps,
     edges: steps.slice(1).map((s, i) => ({ step_id: s.id, depends_on_id: steps[i].id })),
+    step_outputs: [
+      { step_id: "step-gate", bytes: gateOutput.length, created_at: "2026-11-20T10:04:00Z" },
+    ],
   },
   gateOutput,
 };

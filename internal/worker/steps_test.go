@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -73,6 +74,10 @@ type fixture struct {
 	host   *codehost.Fake
 	agent  *harness.Fake
 	stages []string
+	// outputs are the gate outputs uploaded, by step ID.
+	outputs map[string][]byte
+	// refuseOutputs makes the server refuse gate output uploads.
+	refuseOutputs bool
 	// identity, when set, is the commit_identity JSON the token reply
 	// carries.
 	identity string
@@ -80,7 +85,7 @@ type fixture struct {
 
 func newFixture(t *testing.T, gate string) *fixture {
 	t.Helper()
-	f := &fixture{t: t, host: &codehost.Fake{Repo: testRepo}, agent: &harness.Fake{}}
+	f := &fixture{t: t, host: &codehost.Fake{Repo: testRepo}, agent: &harness.Fake{}, outputs: map[string][]byte{}}
 	f.origin = newOrigin(t, map[string]string{
 		"README.md":            "hello\n",
 		".factory/config.toml": fmt.Sprintf("gate = %q\n", gate),
@@ -99,6 +104,19 @@ func newFixture(t *testing.T, gate string) *fixture {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.stages = append(f.stages, body.Stage)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	srv.HandleFunc("PUT /api/v1/steps/{id}/output", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("worker_id") != "w" {
+			t.Errorf("output uploaded for worker %q", r.URL.Query().Get("worker_id"))
+		}
+		if f.refuseOutputs {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"code":"internal","message":"internal error"}}`))
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		f.outputs[r.PathValue("id")] = body
 		_, _ = w.Write([]byte(`{}`))
 	})
 	_, client := newRecorder(t, nil)
@@ -338,6 +356,40 @@ func TestFailures(t *testing.T) {
 		if r.Outcome != "failed" || r.Retryable || !strings.Contains(r.Reason, "the gate broke") || !strings.Contains(r.Reason, "exit status 3") {
 			t.Errorf("gate = %+v", r)
 		}
+		if string(f.outputs["s"]) != "the gate broke\n" {
+			t.Errorf("kept output = %q", f.outputs["s"])
+		}
+	})
+	t.Run("a gate that prints a megabyte and fails early", func(t *testing.T) {
+		// A failing test first, then a megabyte of passing ones, as go test -v prints.
+		gate := `printf '=== RUN   TestEarly\n    early_test.go:9: got 1, want 2\n--- FAIL: TestEarly (0.00s)\n'; ` +
+			`i=0; while [ $i -lt 30000 ]; do printf '=== RUN   TestPass\n--- PASS: TestPass (0.00s)\n'; i=$((i+1)); done; ` +
+			`printf 'FAIL\tgithub.com/o/r\t0.4s\n'; exit 1`
+		f := newFixture(t, gate)
+		r := f.e.run(ctx, f.claim("gate", map[string]any{}, f.chain())).report()
+		if r.Outcome != "failed" || r.Retryable {
+			t.Fatalf("gate = %+v", r)
+		}
+		for _, want := range []string{"--- FAIL: TestEarly", "early_test.go:9: got 1, want 2", "GET /api/v1/steps/s/output"} {
+			if !strings.Contains(r.Reason, want) {
+				t.Errorf("the reason does not name %q:\n%s", want, r.Reason)
+			}
+		}
+		if len(r.Reason) > 10000 {
+			t.Errorf("the reason is %d bytes", len(r.Reason))
+		}
+		out := string(f.outputs["s"])
+		if len(out) < 1<<20 || !strings.HasPrefix(out, "=== RUN   TestEarly\n") || !strings.HasSuffix(out, "FAIL\tgithub.com/o/r\t0.4s\n") || strings.Contains(out, "bytes of output cut") {
+			t.Errorf("kept %d bytes, want the whole output", len(out))
+		}
+	})
+	t.Run("a gate output that cannot be kept still fails with its reason", func(t *testing.T) {
+		f := newFixture(t, "echo error: broke; exit 1")
+		f.refuseOutputs = true
+		r := f.e.run(ctx, f.claim("gate", map[string]any{}, f.chain())).report()
+		if r.Outcome != "failed" || r.Retryable || !strings.Contains(r.Reason, "error: broke") || !strings.Contains(r.Reason, "could not be kept") {
+			t.Errorf("gate = %+v", r)
+		}
 	})
 	t.Run("missing config is final at workspace", func(t *testing.T) {
 		f := newFixture(t, "true")
@@ -428,6 +480,74 @@ func TestFixAppliesFindingsOnce(t *testing.T) {
 	if prompt := f.agent.Requests[len(f.agent.Requests)-1].Prompt; !strings.Contains(prompt, `["lint"]`) {
 		t.Errorf("the checks fix prompt does not name the failed checks: %q", prompt)
 	}
+}
+
+// TestFixRepairsItsGate hands a fix session whose gate fails that gate's
+// whole output, once, and pushes what makes the gate pass.
+func TestFixRepairsItsGate(t *testing.T) {
+	ctx := t.Context()
+	f := newFixture(t, "test -f repaired.txt || { echo 'error: repaired.txt is missing'; exit 1; }")
+	results := f.chain()
+	results[testRepo+"/review-1"] = reviewResult{Verdict: "changes", Findings: "add fixed.txt"}
+	params := map[string]any{"round": 1, "findings": testRepo + "/review-1"}
+	var handed string
+	f.agent.RunFunc = func(c context.Context, req harness.Request) error {
+		if !strings.Contains(req.Prompt, "the repository's gate command failed") {
+			return writes(map[string]string{"fixed.txt": "ok"})(c, req)
+		}
+		data, err := os.ReadFile(filepath.Join(req.Dir, filepath.FromSlash(gateOutputPath)))
+		if err != nil {
+			return err
+		}
+		handed = string(data)
+		return writes(map[string]string{"repaired.txt": "ok"})(c, req)
+	}
+	r := mustSucceed(t, f.e.run(ctx, f.claim("fix", params, results)))
+	if len(f.agent.Requests) != 3 {
+		t.Fatalf("%d sessions, want implement, fix and the repair", len(f.agent.Requests))
+	}
+	if prompt := f.agent.Requests[2].Prompt; !strings.Contains(prompt, "error: repaired.txt is missing") || !strings.Contains(prompt, gateOutputPath) {
+		t.Errorf("the repair prompt does not carry the failure:\n%s", prompt)
+	}
+	if handed != "error: repaired.txt is missing\n" {
+		t.Errorf("the session was handed %q", handed)
+	}
+	bare := filepath.Join(f.origin, testRepo+".git")
+	if git(t, bare, "rev-parse", testBranch) != asMap(t, r.Result)["head"] {
+		t.Error("the repair was not pushed")
+	}
+	if files := git(t, bare, "ls-tree", "-r", "--name-only", testBranch); !strings.Contains(files, "repaired.txt") || strings.Contains(files, "gate-output") {
+		t.Errorf("the branch holds:\n%s", files)
+	}
+	if string(f.outputs["s"]) != "" {
+		t.Errorf("the kept output is %q, want the passing run's", f.outputs["s"])
+	}
+
+	t.Run("a second failure is final", func(t *testing.T) {
+		f := newFixture(t, "echo 'error: still broken'; exit 1")
+		results := f.chain()
+		results[testRepo+"/review-1"] = reviewResult{Verdict: "changes", Findings: "add fixed.txt"}
+		f.agent.RunFunc = writes(map[string]string{"fixed.txt": "ok"})
+		r := f.e.run(ctx, f.claim("fix", params, results)).report()
+		if r.Outcome != "failed" || r.Retryable || !strings.Contains(r.Reason, "error: still broken") || len(f.agent.Requests) != 3 {
+			t.Errorf("fix = %+v after %d sessions", r, len(f.agent.Requests))
+		}
+	})
+	t.Run("a repair that changes nothing fails with the gate's reason", func(t *testing.T) {
+		f := newFixture(t, "test -f never.txt || { echo 'error: never'; exit 1; }")
+		results := f.chain()
+		results[testRepo+"/review-1"] = reviewResult{Verdict: "changes", Findings: "add fixed.txt"}
+		f.agent.RunFunc = func(c context.Context, req harness.Request) error {
+			if strings.Contains(req.Prompt, "the repository's gate command failed") {
+				return nil
+			}
+			return writes(map[string]string{"fixed.txt": "ok"})(c, req)
+		}
+		r := f.e.run(ctx, f.claim("fix", params, results)).report()
+		if r.Outcome != "failed" || r.Retryable || !strings.Contains(r.Reason, "error: never") {
+			t.Errorf("fix = %+v", r)
+		}
+	})
 }
 
 func TestMerge(t *testing.T) {

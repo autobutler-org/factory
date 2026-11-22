@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+type StepOutput struct {
+	StepID    string    `json:"step_id"`
+	Output    []byte    `json:"output"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type WorkDependency struct {
 	WorkItemID  string    `json:"work_item_id"`
 	BlockedByID string    `json:"blocked_by_id"`

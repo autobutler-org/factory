@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -212,22 +213,38 @@ func (s *stepRun) implement(ctx context.Context) outcome {
 	return succeeded(headResult{Head: head})
 }
 
-// runGate runs the repository's gate. A failure is final and carries the
-// end of the gate's output.
-func (s *stepRun) runGate(ctx context.Context, t *tree, cfg repoconfig.Config) *outcome {
+// runGate runs the repository's gate and keeps its output with the step on
+// the server, passed or failed. A failure is final; its reason leads with
+// the lines that look like failures, then the end of the output, and says
+// where the full output is. output is what was kept, for a session to read.
+func (s *stepRun) runGate(ctx context.Context, t *tree, cfg repoconfig.Config) (output []byte, failed *outcome) {
 	out, err := t.runGate(ctx, cfg.Gate, cfg.GateTimeout)
-	var o outcome
-	switch {
-	case err == nil:
-		return nil
-	case ctx.Err() != nil:
-		o = retry(ctx.Err())
-	case errors.Is(err, errGateTimeout):
-		o = final(fmt.Errorf("the gate command `%s` failed: %w", cfg.Gate, err))
-	default:
-		o = final(fmt.Errorf("the gate command `%s` failed: %w; its output ends:\n%s", cfg.Gate, err, tail(out, gateTailBytes)))
+	if ctx.Err() != nil {
+		o := retry(ctx.Err())
+		return nil, &o
 	}
-	return &o
+	output = out.Bytes()
+	kept := s.keepOutput(ctx, output, out.Total())
+	if err == nil {
+		return output, nil
+	}
+	o := final(errors.New(gateFailure(cfg.Gate, err, output, kept)))
+	return output, &o
+}
+
+// keepOutput uploads a gate run's output and returns the sentence a
+// failure reason ends with: where the full output is, or why it was not
+// kept. A failed upload does not fail the step.
+func (s *stepRun) keepOutput(ctx context.Context, output []byte, total int64) string {
+	if err := s.e.cfg.Client.UploadOutput(ctx, s.claim.Step.ID, s.e.workerID, output); err != nil {
+		s.e.cfg.Log.Warn("could not keep the gate output", "step_id", s.claim.Step.ID, "err", err)
+		return fmt.Sprintf("The full output (%d bytes) could not be kept: %v", total, err)
+	}
+	size := fmt.Sprintf("%d bytes", total)
+	if total > int64(len(output)) {
+		size = fmt.Sprintf("%d bytes, cut to its first and last lines", total)
+	}
+	return fmt.Sprintf("The full output (%s) is kept with the step: GET /api/v1/steps/%s/output, or the step's Full gate output link on the work item's page.", size, s.claim.Step.ID)
 }
 
 // gate runs the repository's check command on the branch. It only reads.
@@ -236,7 +253,7 @@ func (s *stepRun) gate(ctx context.Context) outcome {
 	if failed != nil {
 		return *failed
 	}
-	if failed := s.runGate(ctx, t, cfg); failed != nil {
+	if _, failed := s.runGate(ctx, t, cfg); failed != nil {
 		return *failed
 	}
 	s.e.stage(ctx, s.claim, stageGatePassed)
@@ -362,7 +379,9 @@ func (s *stepRun) review(ctx context.Context) outcome {
 // fix runs a session on the findings of the review its params name, gates
 // the change, and pushes it, which updates the open pull request. A commit
 // for this round already on the branch means an earlier attempt finished the
-// session, so it is gated and pushed again.
+// session, so it is gated and pushed again. When the gate fails, a second
+// session is handed the gate's output to make it pass, and the gate runs
+// again; a second failure is final.
 func (s *stepRun) fix(ctx context.Context) outcome {
 	// A review's findings, or the failed checks of an await_checks round.
 	var r struct {
@@ -406,8 +425,17 @@ func (s *stepRun) fix(ctx context.Context) outcome {
 			return retry(err)
 		}
 	}
-	if failed := s.runGate(ctx, t, cfg); failed != nil {
-		return *failed
+	if output, failed := s.runGate(ctx, t, cfg); failed != nil {
+		if failed.retryable {
+			return *failed
+		}
+		// The session gets one more go, with its gate's output.
+		if o := s.repairGate(ctx, t, cfg, output, failed.err.Error(), subject); o != nil {
+			return *o
+		}
+		if _, failed := s.runGate(ctx, t, cfg); failed != nil {
+			return *failed
+		}
 	}
 	if err := t.push(ctx); err != nil {
 		return pushFailure(err)
@@ -418,6 +446,48 @@ func (s *stepRun) fix(ctx context.Context) outcome {
 	}
 	s.e.stage(ctx, s.claim, stageSessionFinished)
 	return succeeded(headResult{Head: head})
+}
+
+// repairGate runs a session on a failed gate: the reason inline, the whole
+// output kept in gateOutputPath, and commits what it changed. It returns
+// nil when there is a change to gate again, and otherwise the outcome:
+// blocked, a retryable session failure, or the gate's failure when the
+// session changed nothing.
+func (s *stepRun) repairGate(ctx context.Context, t *tree, cfg repoconfig.Config, output []byte, reason, subject string) *outcome {
+	gateFailed := final(errors.New(reason))
+	file := filepath.Join(t.dir, filepath.FromSlash(gateOutputPath))
+	if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
+		o := retry(fmt.Errorf("write the gate output for the session: %w", err))
+		return &o
+	}
+	if err := os.WriteFile(file, output, 0o600); err != nil {
+		o := retry(fmt.Errorf("write the gate output for the session: %w", err))
+		return &o
+	}
+	s.e.stage(ctx, s.claim, stageSessionRunning)
+	if err := s.e.session(ctx, t.dir, gateFixBrief(s.claim.Item, s.repo, cfg.Gate, reason), cfg.SessionTimeout); err != nil {
+		dropNotes(t.dir)
+		o := retry(err)
+		return &o
+	}
+	if question, ok := readNote(t.dir, blockedPath); ok {
+		dropNotes(t.dir)
+		return &outcome{blocked: question}
+	}
+	dropNotes(t.dir)
+	clean, err := t.clean(ctx)
+	if err != nil {
+		o := retry(err)
+		return &o
+	}
+	if clean {
+		return &gateFailed
+	}
+	if _, err := t.commit(ctx, "Make the gate pass: "+subject); err != nil {
+		o := retry(err)
+		return &o
+	}
+	return nil
 }
 
 // mergeResult is merge's result.

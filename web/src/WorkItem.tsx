@@ -3,6 +3,7 @@ import { Block, label, State, Status, Time } from "./format";
 import { Sandboxes } from "./Logs";
 import { Link, useTitle } from "./nav";
 import { usePoll } from "./poll";
+import { stepOutputPath } from "./StepOutput";
 
 async function load(id: string, get: Get, signal: AbortSignal) {
   const base = `/work/${encodeURIComponent(id)}`;
@@ -127,7 +128,7 @@ export function WorkItemPage({ id }: { id: string }) {
         )}
       </section>
 
-      <Steps graph={graph} events={events} />
+      <Steps id={item.id} graph={graph} events={events} />
       <Sandboxes id={item.id} />
       <Timeline events={events} />
     </>
@@ -144,7 +145,7 @@ function reasonOf(stepID: string, events: WorkEvent[]): string {
   return "";
 }
 
-function Steps({ graph, events }: { graph: Graph | null; events: WorkEvent[] }) {
+function Steps({ id, graph, events }: { id: string; graph: Graph | null; events: WorkEvent[] }) {
   if (!graph) {
     return (
       <section aria-labelledby="steps">
@@ -154,6 +155,7 @@ function Steps({ graph, events }: { graph: Graph | null; events: WorkEvent[] }) 
     );
   }
   const keys = new Map(graph.steps.map((s) => [s.id, s.key]));
+  const outputs = new Map(graph.step_outputs.map((o) => [o.step_id, o]));
   return (
     <section aria-labelledby="steps">
       <h2 id="steps">
@@ -165,6 +167,7 @@ function Steps({ graph, events }: { graph: Graph | null; events: WorkEvent[] }) 
             .filter((e) => e.step_id === s.id)
             .map((e) => keys.get(e.depends_on_id));
           const reason = reasonOf(s.id, events);
+          const output = outputs.get(s.id);
           return (
             <li key={s.id} className={`step step-${s.state}`}>
               <h3>{s.key}</h3>
@@ -181,6 +184,14 @@ function Steps({ graph, events }: { graph: Graph | null; events: WorkEvent[] }) 
                     {reason}
                   </Block>
                 </details>
+              ) : null}
+              {output ? (
+                <p>
+                  <Link to={stepOutputPath(id, s.id)}>Full gate output</Link>{" "}
+                  <span className="meta">
+                    <span className="number">{output.bytes.toLocaleString()}</span> bytes
+                  </span>
+                </p>
               ) : null}
               {s.result != null ? (
                 <details>

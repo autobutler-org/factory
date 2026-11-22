@@ -25,7 +25,9 @@
 // repository (docs/architecture/codehost.md). RegisterPod and
 // WorkerByCredential issue and look up the credential a worker pod gets
 // when it registers, bound to its worker and sandbox key; the API decides
-// what a credential may reach.
+// what a credential may reach. PutStepOutput and StepOutput keep and read
+// the output of a step's gate run, capped at MaxStepOutputBytes and kept for
+// StepOutputRetention.
 package work
 
 import (

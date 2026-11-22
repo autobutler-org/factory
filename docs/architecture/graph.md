@@ -107,7 +107,7 @@ step again, and it must find and reuse what an earlier run left.
 | `secret_scan` | Scan the diff; a finding is `failed`, not retryable | yes | | `{}` | it only reads |
 | `open_pr` | Push and open the pull request, recording it as an output | yes | | `{"url"}` | it finds an existing pull request through the item's outputs |
 | `review` | Agent review | yes | `round`, `last` | `{"verdict": "pass" or "changes", "findings"}` | a review changes nothing |
-| `fix` | Agent session addressing the findings of the step named by `findings` (its result is in the claim's `results`) | yes | `round`, `findings` | `{"head"}` | it continues on the branch it finds |
+| `fix` | Agent session addressing the findings of the step named by `findings` (its result is in the claim's `results`), then the gate, with one more session on the gate's output if it fails | yes | `round`, `findings` | `{"head"}` | it continues on the branch it finds |
 | `await_checks` | Wait for the code host's checks; completed by the server's poller | no | `round`, `last` | `{"verdict": "pass" or "fail", "failed_checks", "head", "required", "checks"}` | it holds nothing |
 | `await_approval` | Wait for a human approval; completed by the server's poller | no | | `{"approved": true, "head"}` | it holds nothing |
 | `merge` | Merge the pull request or add it to the merge queue, recording the output as merged when it is | no | | `{"merged", "queued"}` | merging a merged pull request is a no-op |

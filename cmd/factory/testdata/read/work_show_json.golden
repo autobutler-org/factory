@@ -85,7 +85,8 @@ exit 0
         "step_id": "s2",
         "depends_on_id": "s1"
       }
-    ]
+    ],
+    "step_outputs": []
   },
   "item": {
     "id": "0b8c1f9e-0000-4000-8000-000000000001",

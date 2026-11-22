@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/autobutler-org/factory/internal/apiclient"
@@ -87,11 +88,19 @@ type Result struct {
 func (c *Client) call(ctx context.Context, method, path string, in, out any) (ok bool, err error) {
 	api := apiclient.Client{URL: c.URL, Token: c.Token, HTTP: c.HTTP}
 	ok, err = api.Call(ctx, method, path, nil, in, out)
+	if err != nil {
+		return false, lost(err)
+	}
+	return ok, nil
+}
+
+// lost wraps an error reply that means the claim is gone in ErrLost.
+func lost(err error) error {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) && (apiErr.Code == "not_claimant" || apiErr.Code == "lease_expired") {
-		return false, fmt.Errorf("%w: %w", ErrLost, err)
+		return fmt.Errorf("%w: %w", ErrLost, err)
 	}
-	return ok, err
+	return err
 }
 
 // Register registers the worker as a cluster worker named name and returns
@@ -176,4 +185,15 @@ func (c *Client) CodehostToken(ctx context.Context, itemID, workerID, repo strin
 		return codehost.Token{}, fmt.Errorf("get a code host token for %s: %w", repo, err)
 	}
 	return token, nil
+}
+
+// UploadOutput keeps a gate run's combined output with the step, replacing
+// an earlier run's. The server takes at most 5 MiB.
+func (c *Client) UploadOutput(ctx context.Context, stepID, workerID string, output []byte) error {
+	api := apiclient.Client{URL: c.URL, Token: c.Token, HTTP: c.HTTP}
+	path := "/api/v1/steps/" + stepID + "/output?worker_id=" + url.QueryEscape(workerID)
+	if _, err := api.Send(ctx, http.MethodPut, path, nil, "text/plain; charset=utf-8", output, nil); err != nil {
+		return fmt.Errorf("upload the gate output: %w", lost(err))
+	}
+	return nil
 }

@@ -113,6 +113,15 @@ The body is optional: `{"sandbox_key": "b2e9.../autobutler-org/quark"}` restrict
 
 `outputs` are recorded first. `200` with the step. The claim has ended.
 
+### Keep a gate's output: `PUT /api/v1/steps/{id}/output?worker_id=`
+
+The body is the combined output of one gate run, as it is (`Content-Type: text/plain`), at most 5 MiB
+(`work.MaxStepOutputBytes`): the one request body allowed past the server's 1 MiB cap. The worker cuts a larger
+output to its head and tail first (see [worker.md](worker.md#gate-output)). The caller must hold the step, as for a
+stage report (`409 not_claimant`, `lease_expired`). A later run of the same step replaces the output. `200
+{"step_id", "bytes", "created_at"}`; `413 body_too_large` past the cap. Upload before the result: once the result is
+in, the claim has ended. People read the output with `GET /api/v1/steps/{id}/output` ([api.md](../api.md#gate-output)).
+
 ### Release a step: `POST /api/v1/steps/{id}/release`
 
 `{"worker_id": "6f1c...", "reason": "shutting down"}`. The step is `ready` again, not counted. `200` with the step.
@@ -132,9 +141,10 @@ with the step.
 
 ### Read the graph: `GET /api/v1/work/{id}/graph`
 
-`200 {"graph": {...}, "steps": [step, ...], "edges": [{"step_id", "depends_on_id"}, ...]}` for the item's latest
-graph, steps in plan order. `404` before the item is first planned. `graph` is
-`{"id", "work_item_id", "version", "template", "inputs_hash", "state", "created_at"}`.
+`200 {"graph": {...}, "steps": [step, ...], "edges": [{"step_id", "depends_on_id"}, ...], "step_outputs": [...]}` for
+the item's latest graph, steps in plan order. `404` before the item is first planned. `graph` is
+`{"id", "work_item_id", "version", "template", "inputs_hash", "state", "created_at"}`. `step_outputs` lists the gate
+outputs kept for the graph's steps, `{"step_id", "bytes", "created_at"}`, without the output itself.
 
 ### Replan: `POST /api/v1/work/{id}/replan`
 
@@ -316,7 +326,7 @@ With the launcher on, a worker authenticates as its pod, not with a shared secre
    `worker_credentials`, beside the pod's uid and the sandbox key. The worker keeps it in memory and sends it on every
    later call. It is returned once.
 
-A worker credential reaches only heartbeat, claim, step stage, result and release, and `codehost-token`, and on each
+A worker credential reaches only heartbeat, claim, step stage, result, release and output upload, and `codehost-token`, and on each
 only for its own worker ID: another worker's ID is `403 forbidden`. A claim takes only from the credential's sandbox
 key; a different `sandbox_key` in the body is `403 forbidden`. Every other route is `403 forbidden` for it. Step and
 code host token rules then apply as for any worker, so it can act only on the steps it holds.

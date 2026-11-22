@@ -48,6 +48,20 @@ test("the step graph lists each step with its state and attempts, and a failure 
   expect(within(items[3]).getByText("canceled")).toBeInTheDocument();
 });
 
+test("a step with a kept gate output links to it; one without has no link", async () => {
+  mockAPI(itemRoutes());
+  renderWithAPI(<WorkItemPage id={ITEM_ID} />);
+
+  const steps = await screen.findByRole("region", { name: /Steps/ });
+  const items = within(steps).getAllByRole("listitem");
+  const link = within(items[2]).getByRole("link", { name: "Full gate output" });
+  expect(link).toHaveAttribute("href", `/work/${ITEM_ID}/steps/step-gate/output`);
+  expect(link.closest("p")).toHaveTextContent(
+    `${failedItem.gateOutput.length.toLocaleString()} bytes`
+  );
+  expect(within(items[1]).queryByRole("link", { name: "Full gate output" })).toBeNull();
+});
+
 test("an item that is not planned yet says so", async () => {
   const routes = itemRoutes();
   delete routes[`/work/${ITEM_ID}/graph`];

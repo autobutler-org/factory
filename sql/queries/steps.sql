@@ -212,3 +212,23 @@ LEFT JOIN work_steps s ON s.graph_id = g.id AND s.state = 'ready' AND s.kind = A
                  WHERE n.work_item_id = o.work_item_id AND n.kind = 'pull_request' AND lower(n.repo) = lower(o.repo))
 WHERE o.kind = 'pull_request' AND o.status = 'open'
 ORDER BY w.priority DESC, w.created_at, o.id;
+
+-- name: PutStepOutput :one
+-- Keeps a gate run's output for the step, replacing an earlier run's.
+INSERT INTO step_outputs (step_id, output) VALUES (@step_id, @output)
+ON CONFLICT (step_id) DO UPDATE SET output = excluded.output, created_at = now()
+RETURNING step_id, octet_length(output)::bigint AS bytes, created_at;
+
+-- name: PruneStepOutputs :execrows
+-- Deletes the outputs stored before @before.
+DELETE FROM step_outputs WHERE created_at < @before;
+
+-- name: GetStepOutput :one
+SELECT output, created_at FROM step_outputs WHERE step_id = @step_id;
+
+-- name: ListStepOutputs :many
+-- What is kept of the outputs of a graph's steps, without the output itself.
+SELECT o.step_id, octet_length(o.output)::bigint AS bytes, o.created_at FROM step_outputs o
+JOIN work_steps s ON s.id = o.step_id
+WHERE s.graph_id = @graph_id
+ORDER BY s.position;

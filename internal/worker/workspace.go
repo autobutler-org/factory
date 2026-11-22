@@ -439,22 +439,21 @@ func (t *tree) ancestorOf(ctx context.Context, commit, head string) bool {
 	return err == nil
 }
 
-// gateTailBytes is how much of the gate's output a failure reports.
-const gateTailBytes = 4000
-
 // errGateTimeout is a gate canceled at its deadline.
 var errGateTimeout = errors.New("the gate timed out")
 
 // runGate runs the gate command in the worktree, in its own process group
 // with a scrubbed environment and a scratch HOME, and returns its combined
-// output. At limit the group is killed.
-func (t *tree) runGate(ctx context.Context, command string, limit time.Duration) (string, error) {
+// output, cut to its head and tail past maxGateOutput. At limit the group is
+// killed.
+func (t *tree) runGate(ctx context.Context, command string, limit time.Duration) (*capture, error) {
+	out := newCapture(maxGateOutput)
 	scratch := filepath.Join(t.root, "scratch")
 	if err := os.RemoveAll(scratch); err != nil {
-		return "", fmt.Errorf("clear the gate's scratch directory: %w", err)
+		return out, fmt.Errorf("clear the gate's scratch directory: %w", err)
 	}
 	if err := os.MkdirAll(scratch, 0o700); err != nil {
-		return "", fmt.Errorf("create the gate's scratch directory: %w", err)
+		return out, fmt.Errorf("create the gate's scratch directory: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
@@ -464,17 +463,10 @@ func (t *tree) runGate(ctx context.Context, command string, limit time.Duration)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 5 * time.Second
-	out, err := cmd.CombinedOutput()
+	cmd.Stdout, cmd.Stderr = out, out
+	err := cmd.Run()
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return string(out), fmt.Errorf("%w after %s", errGateTimeout, limit)
+		return out, fmt.Errorf("%w after %s", errGateTimeout, limit)
 	}
-	return string(out), err
-}
-
-// tail is the end of s, at most n bytes.
-func tail(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return "...\n" + s[len(s)-n:]
+	return out, err
 }

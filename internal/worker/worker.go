@@ -8,7 +8,10 @@
 // step protocol. Every kind is safe to run twice and rebuilds what it needs
 // from the claim (the results of earlier steps and the item's outputs) and
 // the pushed branch, so a step can land in a fresh sandbox with an empty
-// disk.
+// disk. Each gate run's output, cut to 5 MiB, is uploaded to the server so it
+// outlives the sandbox, and a failed gate's reason quotes the lines that look
+// like failures; a fix whose gate fails hands that output to one more
+// session.
 //
 // Sessions and the gate run as the worker's children, as the same user, so
 // the worker keeps them away from its credentials itself: it is

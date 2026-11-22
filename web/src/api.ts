@@ -71,10 +71,14 @@ export type Step = {
   finished_at: string | null;
 };
 
+// What is kept of a step's gate output (GET /steps/{id}/output), without the output.
+export type StepOutput = { step_id: string; bytes: number; created_at: string };
+
 export type Graph = {
   graph: { id: string; version: number; template: string; state: string; created_at: string };
   steps: Step[];
   edges: { step_id: string; depends_on_id: string }[];
+  step_outputs: StepOutput[];
 };
 
 export type Hold = { work_item_id: string; title: string; step_id?: string; step_key?: string };
@@ -124,7 +128,8 @@ export class ApiError extends Error {
 
 export type Get = <T>(path: string, signal?: AbortSignal) => Promise<T>;
 
-// getter returns a GET for /api/v1 paths that sends the token as a bearer token.
+// getter returns a GET for /api/v1 paths that sends the token as a bearer token. A JSON reply is
+// decoded; a plain text one (a step's gate output) is returned as a string.
 export function getter(token: string): Get {
   return async <T>(path: string, signal?: AbortSignal) => {
     const resp = await fetch(`/api/v1${path}`, {
@@ -138,6 +143,9 @@ export function getter(token: string): Get {
         body?.error?.code ?? "",
         body?.error?.message ?? `${resp.status} ${resp.statusText}`
       );
+    }
+    if (resp.headers.get("Content-Type")?.startsWith("text/plain")) {
+      return (await resp.text()) as T;
     }
     return (await resp.json()) as T;
   };
