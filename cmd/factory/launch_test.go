@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/autobutler-org/factory/internal/codehost"
 	"github.com/autobutler-org/factory/internal/sandbox"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -48,5 +53,31 @@ func TestWorkerJobEnvironmentIsWhatTheWorkerReads(t *testing.T) {
 		if envName(flagName) != e.Name || fs.Lookup(flagName) == nil {
 			t.Errorf("the Job sets %s, but factory worker has no --%s flag", e.Name, flagName)
 		}
+	}
+}
+
+// TestGitHubHostKeepsOneTokenPerRepository mints a token for a repository
+// on its first call and reuses it until it nears expiry (RefreshingToken),
+// so polling every
+// open pull request does not mint a token each time.
+func TestGitHubHostKeepsOneTokenPerRepository(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }))
+	t.Cleanup(srv.Close)
+	minted := map[string]int{}
+	host := githubHost(func(_ context.Context, repo string) (codehost.Token, error) {
+		minted[repo]++
+		return codehost.Token{Token: "t-" + repo, ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}, srv.URL)
+	for _, repo := range []string{"o/a", "o/a", "o/b", "o/a"} {
+		h, err := host(t.Context(), repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.DefaultBranch(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if minted["o/a"] != 1 || minted["o/b"] != 1 {
+		t.Errorf("minted %v, want one token per repository", minted)
 	}
 }

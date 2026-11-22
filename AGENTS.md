@@ -28,7 +28,7 @@ internal/harness/   drives agent CLIs (Claude Code, Grok) for a session; harness
 internal/repoconfig/ parses a repository's .factory/config.toml
 internal/secretscan/ finds credential-shaped literals in the lines a branch adds
 cmd/fakeagent/      a scripted stand-in for an agent CLI, for tests
-internal/launcher/  the server's launcher: plans ready items, starts one sandbox per runnable chain, runs merge (#17)
+internal/launcher/  the server's launcher: polls the code host to complete wait steps (#55), plans ready items, starts one sandbox per runnable chain, runs merge (#17)
 internal/server/    serves the embedded web UI from public/ (make build/web output; only stub.txt is committed)
 sql/queries/        the SQL sqlc compiles into internal/db
 compose.yaml        the development Postgres, on loopback

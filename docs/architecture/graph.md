@@ -108,8 +108,8 @@ step again, and it must find and reuse what an earlier run left.
 | `open_pr` | Push and open the pull request, recording it as an output | yes | | `{"url"}` | it finds an existing pull request through the item's outputs |
 | `review` | Agent review | yes | `round`, `last` | `{"verdict": "pass" or "changes", "findings"}` | a review changes nothing |
 | `fix` | Agent session addressing the findings of the step named by `findings` (its result is in the claim's `results`) | yes | `round`, `findings` | `{"head"}` | it continues on the branch it finds |
-| `await_checks` | Wait for the code host's checks; completed by an event | no | `round`, `last` | `{"verdict": "pass" or "fail", "failed_checks"}` | it holds nothing |
-| `await_approval` | Wait for a human approval; completed by an event | no | | `{}` | it holds nothing |
+| `await_checks` | Wait for the code host's checks; completed by the server's poller | no | `round`, `last` | `{"verdict": "pass" or "fail", "failed_checks", "head", "required", "checks"}` | it holds nothing |
+| `await_approval` | Wait for a human approval; completed by the server's poller | no | | `{"approved": true, "head"}` | it holds nothing |
 | `merge` | Merge the pull request or add it to the merge queue, recording the output as merged when it is | no | | `{"merged", "queued"}` | merging a merged pull request is a no-op |
 
 The result shapes are the contract the worker implements ([worker.md](worker.md)). The server reads only `verdict`; the rest is kept
@@ -149,8 +149,12 @@ Workers claim steps, not items; see [workers.md](workers.md#the-step-protocol) f
 - **Steps with no sandbox run in the server.** `merge` has no sandbox key, so a sandbox's worker never claims it.
   The server's launcher claims it through the same protocol and merges with the code host
   ([workers.md](workers.md#the-launcher)).
-- **Wait steps hold no sandbox.** `await_checks` and `await_approval` are never handed to a worker. An adapter (#7)
-  completes them with `POST /api/v1/steps/{id}/complete` when the event arrives.
+- **Wait steps hold no sandbox.** `await_checks` and `await_approval` are never handed to a worker. The server's
+  launcher polls the code host and completes them (`work.Service.CompleteWait`, as the actor `system/poller`) when
+  the pull request's head checks pass or fail, or when it is approved
+  ([workers.md](workers.md#polling-the-code-host)). An operator, or a webhook adapter later (#7), can complete one
+  with `POST /api/v1/steps/{id}/complete`; the second completer of the same event gets `409 not_waiting` and changes
+  nothing. A step's `available_at` is when it became `ready`, so for a wait step it is when it started waiting.
 - **Leases, retries, stuck detection** are #6's, per step: an expired lease returns only that step to `ready` with
   no attempt counted; a step with no stage report for `--stuck-after` is revoked and counted; a retryable failure is
   retried after `--retry-delay` until `--max-attempts`. Completed steps are never re-run.
@@ -191,5 +195,5 @@ their next heartbeat. Steps of the new graph run from the start, which is safe b
 - The `decompose` kind, an agent step that proposes how to split a large item into a replan.
 - One telemetry span per step (#13). The UI's work item page lists the graph's steps in plan order; a drawn graph is
   still to come (#14).
-- A wait step only accepts its event while it is `ready`. An adapter that sees checks finish before the chain reaches
-  `await_checks` must check the current status when the step becomes ready (#7).
+- A wait step only accepts its event while it is `ready`. The poller reads the current status, so checks that
+  finished before the chain reached `await_checks` count on the next poll; a webhook adapter (#7) must do the same.

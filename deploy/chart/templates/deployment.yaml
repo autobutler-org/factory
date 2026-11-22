@@ -94,6 +94,8 @@ spec:
               value: {{ .Values.launcher.maxSandboxes | quote }}
             - name: FACTORY_LAUNCHER_PENDING_TIMEOUT
               value: {{ .Values.launcher.pendingTimeout | quote }}
+            - name: FACTORY_LAUNCHER_POLL_INTERVAL
+              value: {{ .Values.launcher.pollInterval | quote }}
             - name: FACTORY_LAUNCHER_CAPABILITIES
               value: {{ join "," .Values.launcher.capabilities | quote }}
             - name: FACTORY_LAUNCHER_SERVICE_ACCOUNT

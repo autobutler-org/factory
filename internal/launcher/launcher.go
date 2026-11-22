@@ -2,6 +2,11 @@
 // step graphs, from inside the factory server, and runs the steps that need
 // no sandbox. Each pass of Launcher.Pass:
 //
+//  0. polls the code host (when a GitHub App is set), at most every
+//     PollInterval: one PullStatus read per open pull request of an item
+//     being worked, completing a ready await_checks step when the head
+//     commit's checks pass or fail and a ready await_approval step when the
+//     pull request is approved, as the actor system/poller;
 //  1. runs the server-side steps (merge) through the step protocol, as the
 //     server's own worker, with the code host (when a GitHub App is set);
 //  2. plans ready items while there is room under the sandbox cap, since a
@@ -63,15 +68,30 @@ type Launcher struct {
 	// and its chain gets a new one. Zero never times one out. A pending
 	// sandbox's worker has not started, so it holds no step.
 	PendingTimeout time.Duration
+	// PollInterval is how often a pass also polls the code host for the
+	// open pull requests of the items being worked (Host must be set): a
+	// pass polls when this long has gone by since the last poll. Zero polls
+	// on every pass.
+	PollInterval time.Duration
+	// ChecksGrace is how long an await_checks step waits on a head commit
+	// with no checks at all, from when the step became ready or the commit
+	// was made, whichever is later, before it passes: a repository with no
+	// CI must not wait forever. Zero passes at once.
+	ChecksGrace time.Duration
 	// Logger receives one line per pass that changed something.
 	Logger *slog.Logger
+
+	// lastPoll is when this process last polled. Each replica keeps its own.
+	lastPoll time.Time
 }
 
 // Report counts what one pass did.
 type Report struct {
 	// Locked is false when another replica held the lock and the pass did
 	// nothing.
-	Locked      bool
+	Locked bool
+	// Polled counts the changes the code host poll made.
+	Polled      int
 	ServerSteps int
 	Planned     int
 	Started     []string
@@ -79,7 +99,7 @@ type Report struct {
 }
 
 func (r Report) changed() bool {
-	return r.ServerSteps+r.Planned+len(r.Started)+len(r.Stopped) > 0
+	return r.Polled+r.ServerSteps+r.Planned+len(r.Started)+len(r.Stopped) > 0
 }
 
 // Pass runs one pass, unless another replica is running one.
@@ -96,6 +116,16 @@ func (l *Launcher) Pass(ctx context.Context) (Report, error) {
 
 func (l *Launcher) pass(ctx context.Context) (Report, error) {
 	var r Report
+	// ponytail: each replica polls on its own interval, so two replicas can
+	// double the requests; keep the last poll in Postgres if that matters.
+	if l.Host != nil && time.Since(l.lastPoll) >= l.PollInterval {
+		l.lastPoll = time.Now()
+		n, err := l.poll(ctx)
+		r.Polled = n
+		if err != nil {
+			return r, err
+		}
+	}
 	if l.Host != nil {
 		n, err := l.runServerSteps(ctx)
 		r.ServerSteps = n
@@ -202,8 +232,8 @@ func sandboxName() string {
 // any error. Errors do not stop the loop; the next pass tries again.
 func (l *Launcher) Run(ctx context.Context, interval time.Duration) {
 	if l.Host == nil {
-		l.Logger.Warn("server-side steps (merge) will not run: no GitHub App is configured. " +
-			"Set --github-app-id and --github-app-key-file; until then merge steps stay ready")
+		l.Logger.Warn("server-side steps (merge) will not run and the code host is not polled: no GitHub App is configured. " +
+			"Set --github-app-id and --github-app-key-file; until then merge and wait steps stay ready")
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -218,7 +248,7 @@ func (l *Launcher) Run(ctx context.Context, interval time.Duration) {
 		case err != nil && ctx.Err() == nil:
 			l.Logger.Error("launcher pass failed", "err", err)
 		case r.changed():
-			l.Logger.Info("launcher pass", "server_steps", r.ServerSteps, "planned", r.Planned, "started", r.Started, "stopped", r.Stopped)
+			l.Logger.Info("launcher pass", "polled", r.Polled, "server_steps", r.ServerSteps, "planned", r.Planned, "started", r.Started, "stopped", r.Stopped)
 		}
 	}
 }

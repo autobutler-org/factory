@@ -105,8 +105,9 @@ sequenceDiagram
     W->>GH: DELETE /installation/token when the work ends
 ```
 
-The server also mints a token for itself, outside this flow: when it plans an item it reads each repository's
-`.factory/config.toml` with one (`work.Configs`), and the launcher merges with one.
+The server also mints tokens for itself, outside this flow: when it plans an item it reads each repository's
+`.factory/config.toml` with one (`work.Configs`), and the launcher merges and polls pull requests with one. It keeps
+one per repository and mints another only when it nears expiry.
 
 The rule is a service function, `work.Service.RepoToken`. A token for repository R of item I is minted only for a
 worker that holds either:
