@@ -13,6 +13,14 @@ export class Reply {
   }
 }
 
+// Text is a 200 with a plain text body, such as a step's gate output.
+export class Text {
+  readonly body: string;
+  constructor(body: string) {
+    this.body = body;
+  }
+}
+
 // mockAPI answers fetch from routes keyed by path and query (without /api/v1); anything else is a
 // 404. It returns the mock so a test can read the calls.
 export function mockAPI(routes: Record<string, unknown>) {
@@ -20,6 +28,12 @@ export function mockAPI(routes: Record<string, unknown>) {
     const url = new URL(String(input), "http://factory.test");
     const key = url.pathname.replace(/^\/api\/v1/, "") + url.search;
     const hit = routes[key];
+    if (hit instanceof Text) {
+      return new Response(hit.body, {
+        status: 200,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
     const reply =
       hit === undefined
         ? new Reply(404, { error: { code: "not_found", message: "no " + key } })

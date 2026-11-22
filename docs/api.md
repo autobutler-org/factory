@@ -31,6 +31,7 @@ to have yours used instead.
 | `GET /api/v1/work/{id}/graph` | | `200 {"graph", "steps", "edges"}`, the item's latest step graph; `404` before it is planned |
 | `GET /api/v1/work/{id}/sandboxes` | | `200 {"sandboxes": [...]}`, the item's worker sandboxes that still exist, oldest first; see [Sandbox logs](#sandbox-logs) |
 | `GET /api/v1/work/{id}/sandboxes/{name}/logs?tail=` or `?after=` | | `200` a read of the sandbox's worker log; see [Sandbox logs](#sandbox-logs) |
+| `GET /api/v1/steps/{id}/output` | | `200` the combined output of the step's latest gate run, as `text/plain`; see [Gate output](#gate-output) |
 | `POST /api/v1/work/{id}/replan` | | `200` with the new graph, planned with each repository's `.factory/config.toml` read again; `409 not_replannable` unless the item is `in_progress` or `in_review`; `422 invalid_request` when a config is missing or unusable; `503 config_unavailable` when the code host cannot be read |
 
 `GET /api/v1/work` also filters on `claimed_by=<worker id>`. States and transition rules are in
@@ -53,7 +54,7 @@ worker), each `pass`, `fail` or `skip`. A failing check is still a `200`. `facto
 [cli.md](cli.md#factory-doctor).
 
 Cluster workers claim steps (`POST /api/v1/workers/{id}/claim`) and report on them under
-`/api/v1/steps/{id}/` (`stage`, `result`, `release`); adapters complete wait steps with
+`/api/v1/steps/{id}/` (`stage`, `result`, `release`, and `PUT output` for a gate's output); adapters complete wait steps with
 `POST /api/v1/steps/{id}/complete`. Developers claim whole items under `/api/v1/work/{id}/` (`claim`, `stage`,
 `result`, `release`, `outputs`). Either kind of claimant gets code host tokens, and the identity to commit as, from
 `POST /api/v1/work/{id}/codehost-token`. All of it is specified in [architecture/workers.md](architecture/workers.md), with
@@ -130,6 +131,40 @@ There is no streamed response. Following is polling, every few seconds like the 
 bounded request well inside the server's 60 second response limit ([config.md](config.md)), and a cursor carries
 nothing on the server, so polling survives a restart of either side.
 
+## Gate output
+
+When a worker runs a repository's gate (the `gate` step, and the gate inside `fix`), it uploads the gate's combined
+stdout and stderr with `PUT /api/v1/steps/{id}/output` ([architecture/workers.md](architecture/workers.md#keep-a-gates-output-put-apiv1stepsidoutputworker_id)),
+passed or failed, before it reports the result. The server keeps it in Postgres, in `step_outputs`, so it outlives
+the sandbox.
+
+### Read a step's gate output: `GET /api/v1/steps/{id}/output`
+
+`200` with the output as it was printed, `Content-Type: text/plain; charset=utf-8`, `X-Content-Type-Options: nosniff`,
+and `Last-Modified` set to when it was stored. `404 not_found` when the step has none: it has not run a gate, its
+output was deleted, or there is no such step. Find the step ID, and whether it has an output, in
+`GET /api/v1/work/{id}/graph` (`step_outputs`). The web UI links to it from the step on the work item's page.
+
+```sh
+curl -sS -H "Authorization: Bearer $FACTORY_API_TOKEN" http://127.0.0.1:8080/api/v1/steps/$STEP/output
+```
+
+- **Size.** At most 5 MiB per step. A gate that prints more keeps its first and last 2.5 MiB or so, each cut at a
+  line break, with a line between them: `[... N bytes of output cut here; the first A and the last B bytes are kept ...]`.
+- **Which run.** One output per step: the latest gate run replaces an earlier one, including the second gate run of
+  a `fix` that repaired its own gate.
+- **How long.** 30 days. Outputs older than that are deleted whenever a new one is stored, and with their step.
+- **The reason.** A failed gate's reason, on the step's result event and the item's `state_reason`, carries the
+  lines that look like failures (`--- FAIL`, `FAIL`, `panic:`, `error:`, `Error:`, compiler diagnostics) with a few
+  lines of context, then the last 3000 bytes, then this route's path. The lines are a heuristic; the output here
+  is the source of truth.
+
+**What this exposes, and to whom.** Gate output is whatever the repository's build and tests print, which can include
+file contents, environment details or anything a test logs. The gate runs without the worker's credentials or the
+model key ([architecture/worker.md](architecture/worker.md#the-session-boundary)), but the factory does not scan
+the output. As with the sandbox logs, every holder of the shared API token can read it until the people half of
+#15; a worker credential cannot read it. The server logs each read in its access log.
+
 ### Enqueueing work
 
 `POST /api/v1/work` takes work by value:
@@ -194,7 +229,7 @@ Every error has the same shape:
 | 409 | `already_registered` | A worker pod registering a second time. |
 | 503 | `sandboxes_not_configured` | A sandbox route on a server started without `--launcher`. |
 | 503 | `codehost_not_configured` | `POST /api/v1/work/{id}/codehost-token` on a server started without a GitHub App. |
-| 413 | `body_too_large` | The body is over 1 MiB. |
+| 413 | `body_too_large` | The body is over 1 MiB, or a gate output upload is over 5 MiB. |
 | 422 | `invalid_request` | The body parsed but a value is invalid, including an unknown `blocked_by`. |
 | 503 | `config_unavailable` | Replanning while the code host cannot be read; retry later. |
 | 503 | `not_ready` | From `/readyz` only. |

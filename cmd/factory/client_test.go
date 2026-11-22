@@ -35,7 +35,7 @@ const (
 {"id":"s2","graph_id":"g1","position":1,"key":"autobutler-org/quark/implement","kind":"implement","params":{},
 "sandbox_key":"k","condition":"","state":"running","attempts":1,"claimed_by":"w1","lease_expires_at":null,"stage":"",
 "stage_reported_at":null,"available_at":"2026-11-18T12:01:00Z","result":null,"started_at":null,"finished_at":null}],
-"edges":[{"step_id":"s2","depends_on_id":"s1"}]}`
+"edges":[{"step_id":"s2","depends_on_id":"s1"}],"step_outputs":[]}`
 	eventsJSON = `{"events":[
 {"id":1,"work_item_id":"0b8c1f9e-0000-4000-8000-000000000001","at":"2026-11-18T12:00:00Z","actor_kind":"adapter","actor_id":"github","type":"created","from_state":null,"to_state":"ready","payload":{}},
 {"id":2,"work_item_id":"0b8c1f9e-0000-4000-8000-000000000001","at":"2026-11-18T12:01:00Z","actor_kind":"system","actor_id":"launcher","type":"transition","from_state":"ready","to_state":"in_progress","payload":{"reason":"planned"}}]}`

@@ -18,6 +18,9 @@ const (
 	prTextPath     = ".factory/pr.md"
 	reviewTextPath = ".factory/review.md"
 	blockedPath    = ".factory/blocked.md"
+	// gateOutputPath is where a session that repairs a failed gate finds
+	// the gate's whole output. The worker writes it; nobody commits it.
+	gateOutputPath = ".factory/gate-output.txt"
 )
 
 // reviewLead is the first sentence of a review prompt. No other prompt
@@ -88,6 +91,26 @@ Apply those findings, with tests where the repository expects them. Follow the r
 `, task(item, repo), strings.TrimSpace(findings), gate, blockedNote)
 }
 
+// gateFixBrief is the prompt for a session that makes a failed gate pass
+// after a fix session's change. reason is the gate's failure reason; the
+// whole output is in gateOutputPath.
+func gateFixBrief(item Item, repo, gate, reason string) string {
+	return fmt.Sprintf(`You are working on a factory work item. A change for its open pull request was just committed on this branch, and the repository's gate command failed on it.
+
+%s
+The gate command is: %s
+
+How it failed:
+%s
+
+The gate's whole output is in %s (cut to its first and last lines when it was larger than 5 MiB). Read it to find what failed.
+
+Make the gate pass, with the smallest change that fixes the cause, and keep what the change was for. Follow the repository's own conventions. Stay inside this directory. Do not commit, push or open a pull request: the open pull request updates once the gate passes.
+
+%s
+`, task(item, repo), gate, strings.TrimSpace(reason), gateOutputPath, blockedNote)
+}
+
 // readNote reads and removes the file a session left at rel. ok is false
 // when there is none.
 func readNote(dir, rel string) (text string, ok bool) {
@@ -103,7 +126,7 @@ func readNote(dir, rel string) (text string, ok bool) {
 // dropNotes removes every file a session uses to talk to the worker, so a
 // commit does not record them.
 func dropNotes(dir string) {
-	for _, rel := range []string{prTextPath, reviewTextPath, blockedPath} {
+	for _, rel := range []string{prTextPath, reviewTextPath, blockedPath, gateOutputPath} {
 		_ = os.Remove(filepath.Join(dir, filepath.FromSlash(rel)))
 	}
 }

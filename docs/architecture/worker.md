@@ -52,11 +52,11 @@ Every step has the repository in `params.repo`. A sandbox step works in `<work-d
 | --- | --- | --- | --- | --- |
 | `workspace` | Reads the remote's default branch, clones, and checks out `params.branch`: the remote branch when it exists, otherwise a new branch off the base. Reads `.factory/config.toml` from the base so a repository that is not set up fails before any session. | `{"branch", "base", "head"}` | Reuses the clone and an existing remote branch. | Missing or invalid config: final. Git errors: retryable. |
 | `implement` | Runs the writing session with the brief, commits the change with the pull request text the session left in `.factory/pr.md` as the commit message, and pushes the branch (after a secret scan). | `{"head"}` | A branch already ahead of its base with nothing uncommitted means an earlier attempt finished: the session is skipped and the branch pushed again. | Session crash, timeout or no change: retryable. `.factory/blocked.md` written: `blocked` with its text. Secret in the change: final. |
-| `gate` | Runs the repository's `gate` command in the worktree with a scrubbed environment, a scratch `HOME`, and `gate_timeout`. | `{}` | Only reads. | Final, with the end (4000 bytes) of the gate's output in the reason, which lands on the step's result event and the item's `state_reason`. |
+| `gate` | Runs the repository's `gate` command in the worktree with a scrubbed environment, a scratch `HOME`, and `gate_timeout`, and keeps its output with the step on the server ([gate output](#gate-output)). | `{}` | Only reads. | Final. The reason leads with the lines that look like failures, then the end of the output, then where the full output is; it lands on the step's result event and the item's `state_reason`. |
 | `secret_scan` | Scans the lines the branch adds relative to its base for credential-shaped literals and the step's own token (`internal/secretscan`). | `{}` | Only reads. | Final; the reason names files, lines and kinds, never the secret. |
 | `open_pr` | Commits anything left, pushes, and opens the pull request from the branch into the base. The title and body come from the branch's first commit; the body is `codehost.PullBody` with the item's `external_url` and the item's other pull requests. Records the pull request as an output, first in a stage report, then in the result. | `{"url"}` | A pull request already in `outputs` for the repository is the result, untouched. One opened by an attempt that died before recording it is found by its branch (`FindPull`). | Code host errors: retryable. |
 | `review` | Runs a review session; the reviewer writes its verdict to `.factory/review.md`. Anything the session left in the worktree is discarded. | `{"verdict": "pass" or "changes", "findings"}` | Changes nothing. | No or malformed verdict, session crash: retryable. |
-| `fix` | Runs a session on the findings of the step named by `params.findings` (read from `results`: a review's `findings`, or an `await_checks` round's `failed_checks`), commits as `Address the findings of <that step's key>`, runs the gate, and pushes, which updates the open pull request. | `{"head"}` | A commit with that subject already on the branch means the session finished: it is gated and pushed again. | Like `implement`; a gate failure is final. |
+| `fix` | Runs a session on the findings of the step named by `params.findings` (read from `results`: a review's `findings`, or an `await_checks` round's `failed_checks`), commits as `Address the findings of <that step's key>`, runs the gate, and pushes, which updates the open pull request. When that gate fails, a second session is handed the gate's failure reason and its whole output in `.factory/gate-output.txt`, its change is committed as `Make the gate pass: Address the findings of <key>`, and the gate runs again. | `{"head"}` | A commit with that subject already on the branch means the session finished: it is gated and pushed again. | Like `implement`. A second gate failure, or a repair session that changes nothing, is final with the gate's reason. |
 | `merge` | Merges the recorded pull request, or adds it to the merge queue when its base has one, and records it merged. No sandbox. | `{"merged", "queued"}` | An output already merged, or a pull request the code host shows merged, is not merged again. | No pull request recorded: final. Code host errors: retryable. |
 
 `await_checks` and `await_approval` are never handed to a worker. A step of any other kind fails as final.
@@ -69,7 +69,33 @@ Every report of a stage resets the step's stuck timer. The stages are `worktree_
 The implement, review and fix prompts are schmeide's, with the tracker reference replaced by the item's title,
 body, `source`, and `external_url` (or "created directly in the factory"). A session talks back through files in
 `.factory/`, which are removed before any commit: `pr.md` (pull request title and body), `review.md` (verdict), and
-`blocked.md` (a question for a person).
+`blocked.md` (a question for a person). The worker writes `gate-output.txt` for a session that repairs a failed gate
+in `fix`; it is removed the same way.
+
+### Gate output
+
+Every gate run (the `gate` step, and each gate run in `fix`) is captured whole up to 5 MiB, stdout and stderr
+together, in memory. A gate that prints more keeps its first and last 2.5 MiB or so, each cut at a line break,
+with one line between them that says how many bytes were cut; the worker never holds more than that, however much
+the gate prints. Before it reports the result, the worker uploads what it kept with
+`PUT /api/v1/steps/{id}/output` ([workers.md](workers.md#keep-a-gates-output-put-apiv1stepsidoutputworker_id)), passed or
+failed. A failed upload is logged and named in the reason; it does not fail the step.
+
+- **Where it is kept.** Postgres, the `step_outputs` table: one row per step, keyed by the step, replaced by a later
+  run of the same step. Postgres is already the factory's only store, the row is deleted with its step, and 5 MiB is
+  well within what a `bytea` column and one HTTP request handle, so object storage would add a credential and a
+  service for no gain at this size.
+- **For how long.** 30 days: the server deletes older outputs whenever it stores a new one.
+- **Who can read it.** Every holder of the shared API token, with `GET /api/v1/steps/{id}/output` or the step's
+  **Full gate output** link on the work item's page in the web UI, the same as the sandbox log routes, until the
+  people half of #15. A worker credential can upload the output of a step it holds and read nothing. See
+  [api.md](../api.md#gate-output) for what the output can contain.
+
+A failed gate's reason is meant to be read on its own: `the gate command `...` failed: <error>.`, then the lines that
+match common failure markers (`--- FAIL`, a line starting `FAIL`, `panic:`, `error:` or `Error:`, a
+`file:line:column:` or `file(line,column): error` diagnostic) with three lines of context either side, a repeated
+line quoted once, at most 4000 bytes; then the last 3000 bytes of the output; then where the full output is. A gate
+that timed out gets the same reason. The markers are a heuristic; the kept output is the source of truth.
 
 ### Sessions
 

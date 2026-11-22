@@ -1,6 +1,8 @@
 // Package api is factory's HTTP JSON API: /healthz, /readyz and the versioned
 // routes under /api/v1, including read-only views of a work item's worker
-// sandboxes and their logs through Config.Sandboxes. Every other path goes to Config.UI, the web UI, when
+// sandboxes and their logs through Config.Sandboxes, and of the gate output
+// kept for a step, which the step's worker uploads (PUT, the one body
+// allowed past MaxBodyBytes). Every other path goes to Config.UI, the web UI, when
 // one is set. Handlers only decode the request, call the work service, and
 // encode the result; they hold no SQL and no state rules.
 //
@@ -41,7 +43,8 @@ import (
 	"github.com/autobutler-org/factory/internal/work"
 )
 
-// MaxBodyBytes caps every request body.
+// MaxBodyBytes caps every request body but a step output upload, which
+// work.MaxStepOutputBytes caps.
 const MaxBodyBytes = 1 << 20
 
 // Config is what the API needs.
@@ -135,6 +138,8 @@ func New(cfg Config) http.Handler {
 	v1.HandleFunc("POST /api/v1/steps/{id}/result", h.stepResult)
 	v1.HandleFunc("POST /api/v1/steps/{id}/release", h.stepRelease)
 	v1.HandleFunc("POST /api/v1/steps/{id}/complete", h.completeWait)
+	v1.HandleFunc("PUT /api/v1/steps/{id}/output", h.putStepOutput)
+	v1.HandleFunc("GET /api/v1/steps/{id}/output", h.stepOutput)
 	v1.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "not_found", "no route for "+r.Method+" "+r.URL.Path, nil)
 	})
@@ -146,10 +151,11 @@ func New(cfg Config) http.Handler {
 	workers.HandleFunc("POST /api/v1/steps/{id}/stage", h.stepStage)
 	workers.HandleFunc("POST /api/v1/steps/{id}/result", h.stepResult)
 	workers.HandleFunc("POST /api/v1/steps/{id}/release", h.stepRelease)
+	workers.HandleFunc("PUT /api/v1/steps/{id}/output", h.putStepOutput)
 	workers.HandleFunc("POST /api/v1/work/{id}/codehost-token", h.codehostToken)
 	workers.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, r, http.StatusForbidden, "forbidden", "a worker credential may only heartbeat, claim, report on its own steps "+
-			"and get code host tokens for them; "+r.Method+" "+r.URL.Path+" is not one of those", nil)
+		writeError(w, r, http.StatusForbidden, "forbidden", "a worker credential may only heartbeat, claim, report on its own steps, "+
+			"upload their gate output, and get code host tokens for them; "+r.Method+" "+r.URL.Path+" is not one of those", nil)
 	})
 	mux.Handle("/api/v1/", h.authenticate(v1, workers))
 
@@ -172,7 +178,11 @@ func (h handlers) observe(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Request-ID", id)
 		r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, id))
-		r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
+		limit := int64(MaxBodyBytes)
+		if isStepOutputUpload(r) {
+			limit = work.MaxStepOutputBytes
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		h.cfg.Logger.LogAttrs(r.Context(), slog.LevelInfo, "request",
@@ -312,7 +322,7 @@ func (h handlers) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &te):
 		writeError(w, r, http.StatusConflict, "illegal_transition", err.Error(), map[string]any{"current_state": te.From, "allowed": te.Allowed})
 	case errors.As(err, &tooLarge):
-		writeError(w, r, http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("request body is larger than %d bytes", MaxBodyBytes), nil)
+		writeError(w, r, http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("request body is larger than %d bytes", tooLarge.Limit), nil)
 	case errors.Is(err, errMalformed):
 		writeError(w, r, http.StatusBadRequest, "malformed_request", err.Error(), nil)
 	case errors.Is(err, work.ErrInvalid):

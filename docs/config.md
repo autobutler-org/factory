@@ -58,7 +58,7 @@ Durations use Go's syntax: `90s`, `5m`, `3h`. The lease settings are explained i
 `factory serve` refuses to start against a database that is behind its migrations and says to run
 `factory migrate up`.
 
-Fixed limits: request bodies are capped at 1 MiB, headers must arrive within 10 seconds, a request must be read
+Fixed limits: request bodies are capped at 1 MiB (a worker's gate output upload at 5 MiB), headers must arrive within 10 seconds, a request must be read
 within 30 seconds and answered within 60, and shutdown waits up to 10 seconds for requests in flight.
 
 ## `factory migrate`

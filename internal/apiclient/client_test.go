@@ -2,6 +2,7 @@ package apiclient
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -24,6 +25,12 @@ func TestCall(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"a"}`))
 		case "/empty":
 			w.WriteHeader(http.StatusNoContent)
+		case "/raw":
+			body, _ := io.ReadAll(r.Body)
+			if r.Header.Get("Content-Type") != "text/plain" || string(body) != "line\x00\n" {
+				t.Errorf("raw body = %q as %q", body, r.Header.Get("Content-Type"))
+			}
+			_, _ = w.Write([]byte(`{"id":"r"}`))
 		case "/refused":
 			w.WriteHeader(http.StatusConflict)
 			_, _ = w.Write([]byte(`{"error":{"code":"illegal_transition","message":"no","current_state":"design","allowed":["ready","blocked"]}}`))
@@ -37,6 +44,9 @@ func TestCall(t *testing.T) {
 	ok, err := c.Call(ctx, http.MethodPost, "/created", http.Header{"Idempotency-Key": {"k"}}, map[string]string{"a": "b"}, &out)
 	if !ok || err != nil || out.ID != "a" {
 		t.Errorf("201 = %v, %v, %+v; want ok and the body", ok, err, out)
+	}
+	if ok, err := c.Send(ctx, http.MethodPut, "/raw", nil, "text/plain", []byte("line\x00\n"), &out); !ok || err != nil || out.ID != "r" {
+		t.Errorf("raw = %v, %v, %+v; want ok and the body", ok, err, out)
 	}
 	if ok, err := c.Call(ctx, http.MethodGet, "/empty", nil, nil, &out); ok || err != nil {
 		t.Errorf("204 = %v, %v; want not ok and no error", ok, err)

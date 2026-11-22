@@ -4,6 +4,7 @@ import { Board } from "./Board";
 import { SandboxPage } from "./Logs";
 import { Link, usePath, useTitle } from "./nav";
 import { ApiContext } from "./poll";
+import { StepOutputPage } from "./StepOutput";
 import { WorkItemPage } from "./WorkItem";
 import { Workers } from "./Workers";
 
@@ -91,6 +92,11 @@ function Page() {
   if (log) {
     const [id, name] = [decodeURIComponent(log[1]), decodeURIComponent(log[2])];
     return <SandboxPage key={path} id={id} name={name} />;
+  }
+  const output = /^\/work\/([^/]+)\/steps\/([^/]+)\/output\/?$/.exec(path);
+  if (output) {
+    const [id, step] = [decodeURIComponent(output[1]), decodeURIComponent(output[2])];
+    return <StepOutputPage key={path} id={id} stepID={step} />;
   }
   const work = /^\/work\/([^/]+)\/?$/.exec(path);
   if (work) return <WorkItemPage key={work[1]} id={decodeURIComponent(work[1])} />;

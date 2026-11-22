@@ -2,8 +2,12 @@ package api_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/autobutler-org/factory/internal/work"
 )
 
 type stepJSON struct {
@@ -34,6 +38,10 @@ type graphJSON struct {
 		StepID      string `json:"step_id"`
 		DependsOnID string `json:"depends_on_id"`
 	} `json:"edges"`
+	StepOutputs []struct {
+		StepID string `json:"step_id"`
+		Bytes  int    `json:"bytes"`
+	} `json:"step_outputs"`
 }
 
 // fakeWorker is a scripted worker speaking the step protocol over HTTP.
@@ -177,5 +185,76 @@ func TestStepProtocol(t *testing.T) {
 	}
 	if resp := c.do(http.MethodPost, "/api/v1/steps/00000000-0000-0000-0000-000000000000/result", `{"worker_id":"`+b.id+`","outcome":"succeeded"}`, &e); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown step: %d", resp.StatusCode)
+	}
+}
+
+// TestStepOutput uploads a gate output as the step's claimant, past the
+// usual body cap but not past the output cap, and reads it back.
+func TestStepOutput(t *testing.T) {
+	c := newServer(t, nil)
+	a, b := c.worker("a"), c.worker("b")
+	it := c.enqueue(`{"title":"t","repos":["o/a"]}`).Item
+	cl, ok := a.claim("")
+	if !ok {
+		t.Fatal("nothing to claim")
+	}
+	path := "/api/v1/steps/" + cl.Step.ID + "/output"
+	var e apiError
+	if resp := c.do(http.MethodGet, path, "", &e); resp.StatusCode != http.StatusNotFound || e.Error.Code != "not_found" {
+		t.Errorf("output before an upload: %d %q", resp.StatusCode, e.Error.Code)
+	}
+	if resp := c.do(http.MethodPut, path, "x", &e); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("upload without worker_id: %d", resp.StatusCode)
+	}
+	if resp := c.do(http.MethodPut, path+"?worker_id="+b.id, "x", &e); resp.StatusCode != http.StatusConflict || e.Error.Code != "not_claimant" {
+		t.Errorf("upload by b: %d %q", resp.StatusCode, e.Error.Code)
+	}
+	big := strings.Repeat("=== RUN   TestX\n", (2<<20)/16) + "--- FAIL: TestX\n"
+	var info struct {
+		StepID string `json:"step_id"`
+		Bytes  int    `json:"bytes"`
+	}
+	if resp := c.do(http.MethodPut, path+"?worker_id="+a.id, big, &info, "Content-Type", "text/plain"); resp.StatusCode != http.StatusOK || info.Bytes != len(big) || info.StepID != cl.Step.ID {
+		t.Fatalf("upload 2 MiB: %d %+v", resp.StatusCode, info)
+	}
+	too := strings.Repeat("x", work.MaxStepOutputBytes+1)
+	if resp := c.do(http.MethodPut, path+"?worker_id="+a.id, too, &e); resp.StatusCode != http.StatusRequestEntityTooLarge || e.Error.Code != "body_too_large" {
+		t.Errorf("upload past the cap: %d %q", resp.StatusCode, e.Error.Code)
+	}
+	if resp := c.do(http.MethodPost, "/api/v1/steps/"+cl.Step.ID+"/stage", `{"worker_id":"`+a.id+`","stage":"`+strings.Repeat("x", 2<<20)+`"}`, &e); resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("a 2 MiB stage report: %d, want the usual cap", resp.StatusCode)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, c.srv.URL+path, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(got) != big || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/plain") || resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("read the output: %d %q, %d bytes", resp.StatusCode, resp.Header.Get("Content-Type"), len(got))
+	}
+	unauthenticated, err := http.Get(c.srv.URL + path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = unauthenticated.Body.Close()
+	if unauthenticated.StatusCode != http.StatusUnauthorized {
+		t.Errorf("read without the token: %d", unauthenticated.StatusCode)
+	}
+
+	// A second run replaces the first.
+	if resp := c.do(http.MethodPut, path+"?worker_id="+a.id, "second run", &info); resp.StatusCode != http.StatusOK || info.Bytes != len("second run") {
+		t.Fatalf("second upload: %d %+v", resp.StatusCode, info)
+	}
+	var g graphJSON
+	c.do(http.MethodGet, "/api/v1/work/"+it.ID+"/graph", "", &g)
+	if len(g.StepOutputs) != 1 || g.StepOutputs[0].StepID != cl.Step.ID || g.StepOutputs[0].Bytes != len("second run") {
+		t.Errorf("graph step_outputs = %+v", g.StepOutputs)
+	}
+	if resp := c.do(http.MethodGet, "/api/v1/steps/00000000-0000-0000-0000-000000000000/output", "", &e); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("output of an unknown step: %d", resp.StatusCode)
 	}
 }
