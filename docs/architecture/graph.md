@@ -125,7 +125,7 @@ gets the default.
 | --- | --- | --- |
 | `review_rounds` | `3` | How many review rounds to unroll. `0` skips review; `1` reviews once with no fix round. |
 | `require_approval` | `false` | Adds `await_approval` before `merge`. |
-| `merge` | `true` | Adds `merge`. Off leaves the pull request for a person, and the item completes when an adapter records it merged. |
+| `merge` | `true` | Adds `merge`. Off leaves the pull request for a person, and the item completes when the launcher's poll sees it merged. |
 | `after` | `[]` | Repositories of the same item whose chains must finish first. |
 | `image` | none | Recorded as `image` in the chain's `workspace` step params, where the launcher reads it to pick the chain's Job image. The planner does not check it; `internal/work` checks it against the allowlist before planning. |
 
@@ -172,8 +172,11 @@ The item's state follows the graph, through the state machine in [work.md](work.
 | A step reports `blocked` | `blocked`, with the reason |
 | Every step finished but nothing was recorded | `failed` |
 
-Once outputs are done, an output update from anywhere (the `merge` step, or an adapter recording a merge) completes
-the item when nothing is open, and the remaining steps are canceled.
+Once outputs are done, an output update from anywhere (the `merge` step, or the poll seeing a merge) completes
+the item when nothing is open, and the remaining steps are canceled. A pull request merged by a person
+counts the same, whatever step the chain was on: the item completes once every output has landed, and the steps
+left (an earlier wait, a review round, `merge`) are canceled. A pull request closed without merging blocks the item
+with the reason `pull request <url> was closed without merging`.
 
 ### Local claims and the item-level protocol
 

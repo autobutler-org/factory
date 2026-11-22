@@ -180,7 +180,7 @@ a time (a Postgres advisory lock), it:
    output for the step's repository: already `merged` succeeds at once; `closed`, or none, fails without retry.
    Otherwise it asks the code host: a pull request already merged there succeeds and is recorded `merged`; when the
    base branch has a merge queue it enqueues it and succeeds with `{"merged": false, "queued": true}`, leaving the
-   output open for the adapter (#7) to record when the queue lands it; otherwise it merges and records the output
+   output open for the poll to record when the queue lands it; otherwise it merges and records the output
    `merged`. A code host error is a retryable failure. Without a GitHub App this step is skipped, with a warning
    at startup, and `merge` steps stay `ready`.
 3. **Plans ready items** while there is room under `--launcher-max-sandboxes` (`work.Service.StartReady`), whose
@@ -221,6 +221,8 @@ and acts on what it sees. Each change is made as the actor `system/poller`, and 
 | A counted check is still running, or a required one has not reported | nothing |
 | No check at all on the head commit | nothing for two minutes from when the step became ready or the head was committed, whichever is later; then a pass, so a repository without CI does not wait forever |
 | The pull request is approved (GitHub's review decision; with no review rule, an approval and no change request) | completes the ready `await_approval` |
+| The pull request is merged, by the factory, its merge queue or a person | records the output `merged` (`work.Service.ObservePull`) with the head SHA it saw; once every output of the item has landed, the item completes and its remaining steps are canceled, whatever wait step it was on |
+| The pull request is closed without merging | records the output `closed` and moves the item to `blocked` with the reason `pull request <url> was closed without merging` |
 
 - **Which checks count.** The base branch's required checks, from branch protection and rulesets, matched by name;
   a required check that has not reported yet is pending. When none is required (or protection cannot be read),
@@ -233,6 +235,14 @@ and acts on what it sees. Each change is made as the actor `system/poller`, and 
 - **One writer.** The poll runs inside the pass's advisory lock. Completions go through
   `work.Service.CompleteWait`, which accepts a wait step only while it is `ready`, so a second completer of the same
   event (a webhook adapter, #7, or an operator) gets `ErrNotWaiting` and changes nothing.
+- **Closed means blocked.** A closed pull request is not a failure of the work (the code may be fine) and not
+  something the factory should retry on its own (a person closed it on purpose, or by mistake). `blocked` is the
+  state for "a person must look": they reopen the pull request and move the item back to `ready` to plan it again,
+  or move it to `wont_fix`. The item is never completed by a close, even when its other outputs have merged.
+- **Several repositories.** Each pull request is read and recorded on its own; the item completes only when all of
+  its outputs have landed, so one repository's merge leaves the item `in_review` while another's is open.
+- **Idempotent.** `ObservePull` changes nothing when the output already has the observed status, and
+  `CompleteWait` accepts a step only while it waits, so a webhook adapter (#7) can call the same functions.
 - **Errors.** A pull request the code host cannot answer for (an outage, a revoked installation, a rate limit) is
   logged with GitHub's message and polled again next time; the others are still polled.
 

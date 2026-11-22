@@ -48,7 +48,10 @@ server for tests.
 
 ### Pull request status
 
-`PullStatus` is one GraphQL query (one point of the GraphQL rate limit, which is separate from the REST one):
+The launcher reads it for every open pull request of the items being worked, at most once a minute, and with what it
+sees completes `await_checks` and `await_approval` and records merges and closes: the poller is what completes wait
+steps today ([workers.md](workers.md#polling-the-code-host)). `PullStatus` is one GraphQL query (one point of the
+GraphQL rate limit, which is separate from the REST one):
 
 - **State.** `open`, `closed` (closed without merging) or `merged`, whoever merged it.
 - **Head.** The pull request's last commit, its SHA and commit date. Only that commit's checks are read, so a result
@@ -150,6 +153,7 @@ so it never enters the sandbox. That swap is not built.
 ## Not here yet
 
 - Landing a commit directly, without a pull request, for repositories whose config allows it.
-- The GitHub webhook adapter that matches code host events to outputs (#7).
+- The GitHub webhook adapter that matches code host events to outputs (#7). Until it exists, and as a reconcile pass
+  after, the launcher polls.
 - Merge when green beyond one `merge` step; the worker's `open_pr` and `merge` steps are in [worker.md](worker.md).
 - Code hosts other than GitHub, and GitHub Enterprise issue links in `PullBody`.

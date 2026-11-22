@@ -20,10 +20,7 @@ import (
 	"github.com/autobutler-org/factory/internal/work"
 )
 
-const (
-	branch = "b2e9c0de_add-null-check"
-	prURL  = "https://github.test/o/a/pull/1"
-)
+const branch = "b2e9c0de_add-null-check"
 
 var user = work.Actor{Kind: work.ActorUser, ID: "test"}
 
@@ -128,7 +125,12 @@ func (e env) drive(t *testing.T, itemID, key, stop string) {
 		case plan.Review:
 			r.Result = json.RawMessage(`{"verdict":"pass"}`)
 		case plan.OpenPR:
-			r.Outputs = []work.OutputInput{{Repo: "o/a", Kind: work.KindPullRequest, Branch: branch, URL: prURL, Status: work.OutputOpen}}
+			var p struct {
+				Repo string `json:"repo"`
+			}
+			_ = json.Unmarshal(c.Step.Params, &p)
+			url := "https://github.test/" + p.Repo + "/pull/1" // what codehost.Fake{Repo: p.Repo} opens first
+			r.Outputs = []work.OutputInput{{Repo: p.Repo, Kind: work.KindPullRequest, Branch: branch, URL: url, Status: work.OutputOpen}}
 		}
 		if _, err := e.svc.ReportStepResult(ctx, c.Step.ID, w.ID, r); err != nil {
 			t.Fatal(err)
@@ -369,6 +371,9 @@ func TestServerMerge(t *testing.T) {
 		{"a pull request already merged is not merged again", func() *codehost.Fake {
 			f := openPull()
 			f.Pulls[0].State, f.Pulls[0].MergedAt = "closed", "2026-11-18T12:00:00Z"
+			// The poll cannot read it, so the merge step is the one to find
+			// it merged.
+			f.StatusErr = errors.New("graphql is down")
 			return f
 		}, `{"merged": true, "queued": false}`, work.Completed, nil},
 	}
