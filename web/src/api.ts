@@ -91,6 +91,27 @@ export type Worker = {
   holds: Hold[];
 };
 
+// A worker sandbox (Kubernetes Job) the launcher ran for a work item.
+export type Sandbox = {
+  name: string;
+  key: string;
+  repo: string;
+  image: string;
+  phase: string;
+  created: string;
+};
+
+export type LogLine = { time: string; text: string; truncated?: boolean };
+
+// One read of a sandbox's log: GET /work/{id}/sandboxes/{name}/logs?tail= or ?after=.
+export type LogRead = {
+  sandbox: Sandbox;
+  lines: LogLine[];
+  cursor: string;
+  more: boolean;
+  pending: { reason: string; message: string } | null;
+};
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;

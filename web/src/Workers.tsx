@@ -49,7 +49,12 @@ export function Workers() {
                     {w.holds.map((h) => (
                       <li key={h.step_id ?? h.work_item_id}>
                         <Link to={`/work/${h.work_item_id}`}>{h.title}</Link>
-                        {h.step_key ? ` (step ${h.step_key})` : " (whole item)"}
+                        {h.step_key ? ` (step ${h.step_key})` : " (whole item)"} ·{" "}
+                        <Link
+                          to={`/work/${h.work_item_id}/sandboxes/${encodeURIComponent(w.name)}`}
+                        >
+                          Log of {w.name}
+                        </Link>
                       </li>
                     ))}
                   </ul>

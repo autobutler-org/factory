@@ -173,8 +173,11 @@ Patterns new UI in `web/` reuses rather than rebuilds:
   set their case in CSS. An empty list says what is missing and, where there is one, how to fill it or the way out
   (a filtered board offers **Clear filters**). A list that can be long scrolls inside its own box with the next item
   peeking, so what follows it stays in view.
-- **Preformatted text** that can be long (reasons, logs, JSON) goes in `<Block label=...>`, a named, focusable,
-  scrolling region, so a keyboard can scroll it.
+- **Preformatted text** that can be long (reasons, logs, JSON) goes in `<Block label=...>`, a named scrolling
+  region that is a tab stop only while its text overflows, so a keyboard can scroll it.
+- **Following a log** (`web/src/Logs.tsx`) polls through `usePoll` with the API's cursor, keeps a bounded window
+  (`MAX_LINES`), and pauses through `ApiContext`, so the global Pause updates also pauses it. It keeps the reader's
+  scroll position unless they are at the end.
 
 ## Database
 

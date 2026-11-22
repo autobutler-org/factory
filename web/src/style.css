@@ -252,7 +252,8 @@ pre {
   margin: 0.25rem 0;
 }
 pre.reason,
-pre.body {
+pre.body,
+pre.log {
   max-height: 30rem;
   overflow: auto;
   padding: 0.5rem;
@@ -292,4 +293,32 @@ pre.body {
 }
 summary {
   cursor: pointer;
+}
+/* A log pane: the toolbar wraps at 320px, the log scrolls inside its box and wraps unless the
+   reader turns wrapping off, when it scrolls sideways inside the box, never the page. */
+.log-pane {
+  margin-bottom: 1.5rem;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+pre.log.nowrap {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+pre.log time {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.tag {
+  color: var(--color-text-secondary);
+}
+.tag-danger {
+  color: var(--color-danger-text);
+}
+.tag-warning {
+  color: var(--color-warning-text);
 }

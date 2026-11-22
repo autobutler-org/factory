@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { getter } from "./api";
 import { Board } from "./Board";
+import { SandboxPage } from "./Logs";
 import { Link, usePath, useTitle } from "./nav";
 import { ApiContext } from "./poll";
 import { WorkItemPage } from "./WorkItem";
@@ -86,6 +87,11 @@ function Page() {
     }
     document.querySelector<HTMLElement>("main h1")?.focus();
   }, [path]);
+  const log = /^\/work\/([^/]+)\/sandboxes\/([^/]+)\/?$/.exec(path);
+  if (log) {
+    const [id, name] = [decodeURIComponent(log[1]), decodeURIComponent(log[2])];
+    return <SandboxPage key={path} id={id} name={name} />;
+  }
   const work = /^\/work\/([^/]+)\/?$/.exec(path);
   if (work) return <WorkItemPage key={work[1]} id={decodeURIComponent(work[1])} />;
   if (path === "/workers" || path === "/workers/") return <Workers />;

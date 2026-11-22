@@ -155,6 +155,12 @@ the same log to any holder of the API token: `GET /api/v1/work/{id}/sandboxes` l
 `GET /api/v1/work/{id}/sandboxes/{name}/logs` reads one ([api.md](api.md#sandbox-logs)). The server reads it with the
 `pods/log` get its Role grants in the worker namespace.
 
+The web UI shows the same log. A work item's page has a **Worker logs** section with a pane per sandbox, and the
+Workers page links each worker that holds work to its log (`/work/{id}/sandboxes/{name}`). A pane follows a running
+sandbox every 5 seconds unless **Pause following** or the global **Pause updates** is on, and stops once the sandbox
+has ended. It keeps the last 1000 lines; older lines are only in `kubectl logs`. Lines show as time, level and message
+for the worker's own records and as a one-line summary for agent events; **Show raw lines** shows them as written.
+
 ## Giving a repository its own tools
 
 The worker image carries what every repository needs. A repository that needs more, such as Flutter, gets an image
