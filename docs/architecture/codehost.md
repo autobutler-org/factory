@@ -42,8 +42,28 @@ server for tests.
 | `Protection(branch)` | Required approving reviews; an unprotected branch, or a token without Administration read, is no protection. |
 | `RetargetPull(number, base)` | Changes the base, as when the pull request below a stacked one merges. |
 | `ReadFile(branch, path)` | One file at the commit the branch points at, with that commit's SHA, or `ErrFileNotFound`. The server reads `.factory/config.toml` with it when it plans an item. |
+| `PullStatus(number)` | What the server's poller needs about a pull request, in one GraphQL request: open, closed or merged; the head commit and its date; whether it is approved; the base branch's required check names; and the head commit's checks, each pending, passed or failed. See [below](#pull-request-status). |
 
 `codehost.GitHub` also has `RevokeToken`, which ends an installation token before it expires.
+
+### Pull request status
+
+`PullStatus` is one GraphQL query (one point of the GraphQL rate limit, which is separate from the REST one):
+
+- **State.** `open`, `closed` (closed without merging) or `merged`, whoever merged it.
+- **Head.** The pull request's last commit, its SHA and commit date. Only that commit's checks are read, so a result
+  from before a push never counts.
+- **Checks.** Both kinds GitHub has: check runs (GitHub Actions and other Apps) and commit statuses (older
+  integrations, by their context). A check run that has not completed is `pending`; `success`, `neutral` and
+  `skipped` pass; every other conclusion fails. A status is `pending` while pending or expected, and fails on
+  `failure` or `error`.
+- **Required checks.** The names the base branch requires, from its branch protection rule
+  (`requiredStatusCheckContexts`, which needs `administration: read`) and from the active rulesets that apply to
+  it (`Ref.rules`, readable without it). They are matched to checks by name.
+- **Approved.** GitHub's review decision when the branch has a review rule (`APPROVED`); with none, one approving
+  review and no change request among the latest reviews.
+
+It reads the first 100 checks and rules. There are no conditional requests: GitHub's GraphQL API has no ETags.
 
 Helpers that need no network:
 

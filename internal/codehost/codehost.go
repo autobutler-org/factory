@@ -57,6 +57,9 @@ type Host interface {
 	// ReadFile reads the file at path in the commit branch points at, or
 	// returns ErrFileNotFound.
 	ReadFile(ctx context.Context, branch, path string) (File, error)
+	// PullStatus reads pull request number's state, head commit, approval,
+	// required checks and the head's checks, for the server's poller.
+	PullStatus(ctx context.Context, number int) (PullStatus, error)
 }
 
 // File is one file read from the code host.
@@ -77,6 +80,7 @@ type Pull struct {
 	MergedAt string `json:"merged_at"`
 	Head     struct {
 		Ref string `json:"ref"`
+		Sha string `json:"sha"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
