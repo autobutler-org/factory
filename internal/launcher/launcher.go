@@ -6,7 +6,10 @@
 //     PollInterval: one PullStatus read per open pull request of an item
 //     being worked, completing a ready await_checks step when the head
 //     commit's checks pass or fail and a ready await_approval step when the
-//     pull request is approved, as the actor system/poller;
+//     pull request is approved, and recording a pull request merged (the
+//     item completes once every output has landed, whatever wait step it
+//     was on) or closed without merging (the item is blocked), as the actor
+//     system/poller;
 //  1. runs the server-side steps (merge) through the step protocol, as the
 //     server's own worker, with the code host (when a GitHub App is set);
 //  2. plans ready items while there is room under the sandbox cap, since a

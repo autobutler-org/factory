@@ -41,6 +41,8 @@ type Fake struct {
 	HeadChecks map[string][]Check
 	Required   []string
 	Approved   []int
+	// StatusErr, when set, is the error every PullStatus returns.
+	StatusErr error
 
 	mu       sync.Mutex
 	comments map[int][]string
@@ -186,6 +188,9 @@ func (f *Fake) ReadFile(_ context.Context, _, path string) (File, error) {
 func (f *Fake) PullStatus(_ context.Context, number int) (PullStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.StatusErr != nil {
+		return PullStatus{}, f.StatusErr
+	}
 	if number < 1 || number > len(f.Pulls) {
 		return PullStatus{}, fmt.Errorf("no pull request %d", number)
 	}

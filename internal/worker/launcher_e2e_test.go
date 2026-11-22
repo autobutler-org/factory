@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/autobutler-org/factory/internal/codehost"
+	"github.com/autobutler-org/factory/internal/codehost/fakegh"
 	"github.com/autobutler-org/factory/internal/harness"
 	"github.com/autobutler-org/factory/internal/launcher"
 	"github.com/autobutler-org/factory/internal/sandbox"
@@ -87,12 +88,13 @@ func (c *cluster) create(action k8stesting.Action) (bool, runtime.Object, error)
 	return false, nil, nil
 }
 
-// TestE2ELauncherStartsTheWorker runs one item from enqueued to a recorded
-// pull request with nothing but launcher passes: the launcher reads the
-// repository's .factory/config.toml through fakegh and plans it with one
-// review round, starts its chain's sandbox as a Job in the image the config
-// names, and the real worker in that sandbox claims only that chain's steps
-// until the chain waits on checks.
+// TestE2ELauncherStartsTheWorker runs one item from enqueued to completed
+// with nothing but launcher passes: the launcher reads the repository's
+// .factory/config.toml through fakegh and plans it with one review round,
+// starts its chain's sandbox as a Job in the image the config names, and the
+// real worker in that sandbox claims only that chain's steps until the chain
+// waits on checks. Then the launcher's poll sees the checks pass on fakegh
+// and completes the wait, the launcher merges, and the item completes.
 func TestE2ELauncherStartsTheWorker(t *testing.T) {
 	e := newEnv(t, "test -f hello.txt && touch MARKER", 3)
 	const quarkImage = "ghcr.io/autobutler-org/quark-worker:1.4.0"
@@ -167,5 +169,31 @@ func TestE2ELauncherStartsTheWorker(t *testing.T) {
 	workers, err := e.svc.Workers(t.Context())
 	if err != nil || len(workers) != 1 || workers[0].Name != job.Name {
 		t.Errorf("workers = %+v, %v; want the one registered under the Job's name", workers, err)
+	}
+
+	// With the GitHub App, the launcher polls: green checks complete
+	// await_checks-1, the merge runs in the server, and the item completes.
+	e.gh.SetChecks([]fakegh.CheckRun{{ID: 1, Name: "ci", Status: "completed", Conclusion: "success"}})
+	l.Host = func(_ context.Context, repo string) (codehost.Host, error) {
+		return codehost.GitHub{API: e.gh.URL, Repo: repo, Token: ghToken}, nil
+	}
+	for e.state().State != "completed" {
+		if time.Now().After(deadline) {
+			t.Fatalf("item still %s", e.state().State)
+		}
+		if _, err := l.Pass(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if s := e.step(repo + "/await_checks-1"); s.State != "succeeded" || !strings.Contains(string(s.Result), `"verdict": "pass"`) ||
+		!strings.Contains(string(s.Result), fakegh.HeadSHA) {
+		t.Errorf("await_checks-1 = %s %s, want a pass on fakegh's head", s.State, s.Result)
+	}
+	if n, _ := e.gh.Merges(); n != 1 {
+		t.Errorf("merges = %d, want the launcher's one", n)
+	}
+	if pulls, _ := e.gh.Snapshot(); !pulls[0].Merged {
+		t.Errorf("pull = %+v, want merged", pulls[0])
 	}
 }

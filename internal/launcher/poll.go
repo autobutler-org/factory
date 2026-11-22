@@ -17,7 +17,9 @@ import (
 var poller = work.Actor{Kind: work.ActorSystem, ID: "poller"}
 
 // poll reads every open pull request of the items being worked from the
-// code host, one request each, and acts on what it sees. It returns how
+// code host, one request each, and acts on what it sees: a merge or a close
+// is recorded (work.Service.ObservePull), and an open one may complete its
+// chain's wait step. It returns how
 // many changes it made. A pull request the code host cannot answer for is
 // logged and left for the next poll; a database error ends the poll.
 func (l *Launcher) poll(ctx context.Context) (int, error) {
@@ -32,7 +34,7 @@ func (l *Launcher) poll(ctx context.Context) (int, error) {
 			l.Logger.Warn("could not read a pull request; the next poll tries again", "work_item_id", row.WorkItemID, "url", row.Url, "err", err)
 			continue
 		}
-		ok, err := l.completeWait(ctx, row, st)
+		ok, err := l.observe(ctx, row, st)
 		if err != nil {
 			return changed, fmt.Errorf("poll %s: %w", row.Url, err)
 		}
@@ -53,6 +55,23 @@ func (l *Launcher) pullStatus(ctx context.Context, row db.PollPullsRow) (codehos
 		return codehost.PullStatus{}, fmt.Errorf("code host for %s: %w", row.Repo, err)
 	}
 	return host.PullStatus(ctx, number)
+}
+
+// observe acts on one pull request: a merge or a close is recorded on the
+// item whatever step its chain is on; an open one may complete its wait step.
+func (l *Launcher) observe(ctx context.Context, row db.PollPullsRow, st codehost.PullStatus) (bool, error) {
+	status := ""
+	switch st.State {
+	case codehost.PullMerged:
+		status = work.OutputMerged
+	case codehost.PullClosed:
+		status = work.OutputClosed
+	default:
+		return l.completeWait(ctx, row, st)
+	}
+	return l.Work.ObservePull(ctx, row.WorkItemID, work.OutputInput{
+		Repo: row.Repo, Kind: work.KindPullRequest, Branch: row.Branch, URL: row.Url, SHA: st.Head, Status: status,
+	}, poller)
 }
 
 // completeWait completes the ready wait step beside an open pull request

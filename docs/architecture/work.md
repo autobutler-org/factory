@@ -91,8 +91,10 @@ The output of the factory is code landed in repositories, so outputs drive the e
 2. When the worker has nothing more to produce, it says so (`FinishOutputs`), which sets `outputs_done`. If any
    output is still `open`, the item moves to `in_review`. If none is open and at least one is `merged`, it moves to
    `completed`. If it has no open or merged output, the call fails with `ErrNoOutputs`.
-3. Later updates to an output's status (a pull request merging, recorded by an adapter or the API) re-apply the
-   rule: once no output is open and at least one is merged, the item moves to `completed`.
+3. Later updates to an output's status (a pull request merging, recorded by the launcher's poll, the `merge` step or
+   the API) re-apply the rule: once no output is open and at least one is merged, the item moves to `completed`.
+   The poll records a pull request closed without merging as `closed` and moves an item being worked to `blocked`
+   instead (`ObservePull`, [workers.md](workers.md#polling-the-code-host)).
 
 An item is never `completed` with an output still open: a direct transition to `completed` is refused with
 `ErrOutputsPending` unless at least one output is merged and none is open. A commit is `merged` from the start.

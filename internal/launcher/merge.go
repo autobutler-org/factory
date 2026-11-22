@@ -100,7 +100,7 @@ func (l *Launcher) merge(ctx context.Context, repo string, outputs []db.WorkOutp
 		if err := host.EnqueuePull(ctx, queue); err != nil {
 			return failed(true, "enqueue %s: %v", pr.Url, err)
 		}
-		// The adapter (#7) records the output merged when the queue lands it.
+		// The poll records the output merged when the queue lands it.
 		return work.StepResult{Outcome: work.StepSucceeded, Result: json.RawMessage(`{"merged":false,"queued":true}`)}
 	}
 	if err := host.MergePull(ctx, number); err != nil {

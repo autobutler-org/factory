@@ -11,8 +11,11 @@
 // defaults. For the server's
 // launcher it plans ready items (StartReady), lists the chains that need a
 // sandbox (RunnableSandboxes), ends a sandbox only when its chain is done
-// (EndIdleSandbox), and hands the server the steps that need no sandbox
-// (ClaimServerStep).
+// (EndIdleSandbox), hands the server the steps that need no sandbox
+// (ClaimServerStep), lists the open pull requests its code host poll reads
+// (PollPulls), and takes what the poll sees: a completed wait step
+// (CompleteWait) or a pull request merged or closed (ObservePull). Both
+// change nothing when they see the same thing twice.
 //
 // It does not speak HTTP or parse flags, and it does not decide who may call
 // it; callers pass an Actor that is recorded on each event. See
@@ -550,6 +553,55 @@ func (s *Service) RecordOutput(ctx context.Context, id string, o OutputInput, ac
 		return err
 	})
 	return out, err
+}
+
+// ObservePull records what the code host says became of a pull request the
+// item recorded, as the server's poller (or a webhook adapter) sees it, and
+// reports whether anything changed. Merged lands the output: once the item
+// has nothing more to produce and nothing is open, it completes and its
+// remaining steps are canceled, whatever step its graph was on. Closed
+// without merging blocks an item being worked, with the pull request as the
+// reason, so a person decides; it never completes it. A status the output
+// already has changes nothing, so the same observation twice has no effect.
+// A pull request the item did not record is ErrNotFound.
+func (s *Service) ObservePull(ctx context.Context, id string, o OutputInput, actor Actor) (changed bool, err error) {
+	if err := o.validate(); err != nil {
+		return false, err
+	}
+	if o.Kind != KindPullRequest || o.Status == OutputOpen {
+		return false, fmt.Errorf("%w: observe a pull_request that is merged or closed", ErrInvalid)
+	}
+	err = s.inTx(ctx, func(q *db.Queries) error {
+		item, err := q.GetItemForUpdate(ctx, id)
+		if err != nil {
+			return notFound(err, "work item "+id)
+		}
+		outputs, err := q.ListOutputs(ctx, id)
+		if err != nil {
+			return fmt.Errorf("list outputs: %w", err)
+		}
+		i := slices.IndexFunc(outputs, func(out db.WorkOutput) bool { return out.Kind == KindPullRequest && out.Url == o.URL })
+		if i < 0 {
+			return fmt.Errorf("pull request %s of work item %s: %w", o.URL, id, ErrNotFound)
+		}
+		if outputs[i].Status == o.Status {
+			return nil
+		}
+		changed = true
+		if _, err := recordOutput(ctx, q, item, o, actor); err != nil {
+			return err
+		}
+		if o.Status == OutputClosed {
+			if !active(item.State) {
+				return nil
+			}
+			_, err := transition(ctx, q, item, Blocked, "pull request "+o.URL+" was closed without merging", actor, EventTransition, nil)
+			return err
+		}
+		_, err = settle(ctx, q, item, actor)
+		return err
+	})
+	return changed, err
 }
 
 // recordOutput writes one output; the caller holds the row lock on item.
