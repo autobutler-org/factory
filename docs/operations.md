@@ -29,6 +29,13 @@ In the worker namespace (`workers.namespace`, default `factory-workers`):
   that needs another host fails at its first download: add the host to that list and upgrade the release). Otherwise it is a plain NetworkPolicy that
   allows 443 to any address outside `workers.egress.denyCidrs`.
 
+  A worker pod on a freshly started node has been seen to fail its first lookup (`Could not resolve host:
+  github.com`) and succeed ten seconds later. The likely cause, not confirmed, is that Cilium has not yet programmed
+  the FQDN policy, which proxies DNS, for the new endpoint. The worker waits for up to two minutes for registration
+  and for git against the code host to reach their hosts, and logs `the network is not ready; waiting` while it
+  does (docs/architecture/worker.md). A step that fails with `the network was not ready` points at cluster DNS or
+  this policy.
+
 The chart creates no namespaces and no Secrets. The worker Jobs are created by the server, not by the chart.
 
 ## Prerequisites

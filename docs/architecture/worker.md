@@ -27,7 +27,10 @@ sequenceDiagram
 ```
 
 1. **Register** with the worker's name (`--sandbox`, the sandbox's name) and the harnesses it can run, then send
-   one heartbeat to learn the lease length.
+   one heartbeat to learn the lease length. A fresh pod can have no DNS for its first seconds (#76), so a
+   registration that gets no reply at all (a lookup or connection failure) is tried again, after 0.5 s, then
+   doubling up to 10 s, for up to two minutes. If the server is still unreachable then, the worker exits with an
+   error that says the network was not ready. Any reply, even an error, is not retried.
 2. **Heartbeat** every `lease / 3` in the background. When a heartbeat no longer lists the step in hand, the step's
    context is canceled (the agent session and the gate are killed with their process groups) and the worker
    claims again without reporting on it.
@@ -40,6 +43,11 @@ sequenceDiagram
 
 ## Step kinds
 
+Every git command that talks to the remote (`ls-remote`, `fetch`, `push`) and fails before it reached it (git
+prints `Could not resolve host`, `Failed to connect to`, `Connection refused`, `Connection timed out`, and the like)
+is run again with the same backoff as registration, for up to two minutes, before the step fails. Such a failure
+says `the network was not ready` and is retryable, so a slow network start does not fail the item.
+
 Every step has the repository in `params.repo`. A sandbox step works in `<work-dir>/<sandbox key>/`: a bare clone in
 `repo.git` and a worktree in `tree`. Two rules hold for every kind:
 
@@ -50,7 +58,7 @@ Every step has the repository in `params.repo`. A sandbox step works in `<work-d
 
 | Kind | Does | Result | Resume rule | Failure |
 | --- | --- | --- | --- | --- |
-| `workspace` | Reads the remote's default branch, clones, and checks out `params.branch`: the remote branch when it exists, otherwise a new branch off the base. Reads `.factory/config.toml` from the base so a repository that is not set up fails before any session. | `{"branch", "base", "head"}` | Reuses the clone and an existing remote branch. | Missing or invalid config: final. Git errors: retryable. |
+| `workspace` | Reads the remote's default branch, clones, and checks out `params.branch`: the remote branch when it exists, otherwise a new branch off the base. Reads `.factory/config.toml` from the base so a repository that is not set up fails before any session. | `{"branch", "base", "head"}` | Reuses the clone and an existing remote branch. | Missing or invalid config: final. Git errors: retryable, including a remote the network never reached. |
 | `implement` | Runs the writing session with the brief, commits the change with the pull request text the session left in `.factory/pr.md` as the commit message, and pushes the branch (after a secret scan). | `{"head"}` | A branch already ahead of its base with nothing uncommitted means an earlier attempt finished: the session is skipped and the branch pushed again. | Session crash, timeout or no change: retryable. `.factory/blocked.md` written: `blocked` with its text. Secret in the change: final. |
 | `gate` | Runs the repository's `gate` command in the worktree with a scrubbed environment, a scratch `HOME`, and `gate_timeout`, and keeps its output with the step on the server ([gate output](#gate-output)). A failed round with a fix round after it (`"last": false`) succeeds with the verdict `fail` and the failure reason as `failure`, which the next `fix-gate` session is handed. | `{"verdict": "pass" or "fail", "failure"}` | Only reads. | On the last round, final: `the gate failed on all <n> runs, ...`, then the last run's reason, which leads with the lines that look like failures, then the end of the output, then where the full output is; it lands on the step's result event and the item's `state_reason`. A graph planned before gate rounds (no `round` param) fails on the first run. |
 | `secret_scan` | Scans the lines the branch adds relative to its base for credential-shaped literals and the step's own token (`internal/secretscan`). | `{}` | Only reads. | Final; the reason names files, lines and kinds, never the secret. |

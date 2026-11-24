@@ -69,7 +69,10 @@ func (s *stepRun) root() (string, error) {
 
 // spec is the checkout of this step's repository under root.
 func (s *stepRun) spec(root, base, branch string) treeSpec {
-	return treeSpec{root: root, url: s.url(), base: base, branch: branch, token: s.token, gitBin: s.e.git, sweep: s.e.sweep}
+	return treeSpec{
+		root: root, url: s.url(), base: base, branch: branch, token: s.token, gitBin: s.e.git, sweep: s.e.sweep,
+		wait: s.e.cfg.netWait, log: s.e.cfg.Log,
+	}
 }
 
 func (s *stepRun) url() string {
