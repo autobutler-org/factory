@@ -54,6 +54,9 @@ type Host interface {
 	// RetargetPull changes the base branch of pull request number, as when
 	// the pull request it was stacked on merges.
 	RetargetPull(ctx context.Context, number int, base string) error
+	// UpdatePull replaces the title and body of pull request number, as
+	// when a fix session rewrites the pull request text a check reads.
+	UpdatePull(ctx context.Context, number int, title, body string) error
 	// ReadFile reads the file at path in the commit branch points at, or
 	// returns ErrFileNotFound.
 	ReadFile(ctx context.Context, branch, path string) (File, error)
@@ -72,6 +75,8 @@ type File struct {
 // Pull is a pull request.
 type Pull struct {
 	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
 	HTMLURL   string `json:"html_url"`
 	State     string `json:"state"`
 	CreatedAt string `json:"created_at"`

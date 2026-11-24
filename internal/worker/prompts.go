@@ -87,8 +87,10 @@ Reviewer findings:
 
 Apply those findings, with tests where the repository expects them. Follow the repository's own conventions. Stay inside this directory. Do not commit, push or open a pull request: the open pull request updates once the gate passes. The gate command is: %s
 
+If a finding is about the pull request's title or description (a failed check may read them), write the whole new pull request text to %s: the title on the first line, following the repository's commit and pull request title conventions, then a blank line, then the body, following the repository's pull request template if it has one. The current text is the message of the branch's first commit after its base. The open pull request is updated from that file; rewriting it counts as a change, so no code change is needed for such a finding. Put no AI attribution in it: no generated-by footer, no co-author trailer for an AI, and no session link.
+
 %s
-`, task(item, repo), strings.TrimSpace(findings), gate, blockedNote)
+`, task(item, repo), strings.TrimSpace(findings), gate, prTextPath, blockedNote)
 }
 
 // gateFixBrief is the prompt for a session that makes a failed gate pass
@@ -132,15 +134,15 @@ func dropNotes(dir string) {
 }
 
 // prText is the title and body the session left in prTextPath, or the item's
-// title when it left none.
-func prText(dir string, item Item) (title, body string) {
-	text, _ := readNote(dir, prTextPath)
+// title when it left none. ok says whether it left the file.
+func prText(dir string, item Item) (title, body string, ok bool) {
+	text, ok := readNote(dir, prTextPath)
 	title, body, _ = strings.Cut(text, "\n")
 	title, body = strings.TrimSpace(title), strings.TrimSpace(body)
 	if title == "" {
 		title = item.Title
 	}
-	return title, body
+	return title, body, ok
 }
 
 // readVerdict reads and removes the reviewer's verdict file.
