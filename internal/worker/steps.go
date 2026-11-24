@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/autobutler-org/factory/internal/codehost"
 	"github.com/autobutler-org/factory/internal/repoconfig"
@@ -247,17 +250,134 @@ func (s *stepRun) keepOutput(ctx context.Context, output []byte, total int64) st
 	return fmt.Sprintf("The full output (%s) is kept with the step: GET /api/v1/steps/%s/output, or the step's Full gate output link on the work item's page.", size, s.claim.Step.ID)
 }
 
+// gateResult is a gate round's result. failure is the failed gate's
+// reason, which the fix-gate session after it is handed.
+type gateResult struct {
+	Verdict string `json:"verdict"`
+	Failure string `json:"failure,omitempty"`
+}
+
 // gate runs the repository's check command on the branch. It only reads.
+// A failed round with a fix round left after it succeeds with the verdict
+// fail; on the last round, or in a graph planned without gate rounds, the
+// failure is final.
 func (s *stepRun) gate(ctx context.Context) outcome {
+	var p struct {
+		Round int  `json:"round"`
+		Last  bool `json:"last"`
+	}
+	_ = json.Unmarshal(s.claim.Step.Params, &p)
 	t, cfg, failed := s.prepare(ctx)
 	if failed != nil {
 		return *failed
 	}
 	if _, failed := s.runGate(ctx, t, cfg); failed != nil {
-		return *failed
+		switch {
+		case failed.retryable || p.Round == 0:
+			return *failed
+		case p.Last:
+			return final(fmt.Errorf("the gate failed on all %d runs, with a session trying to fix it after each but the last; the last run: %w", p.Round, failed.err))
+		}
+		return succeeded(gateResult{Verdict: "fail", Failure: failed.err.Error()})
 	}
 	s.e.stage(ctx, s.claim, stageGatePassed)
-	return succeeded(struct{}{})
+	return succeeded(gateResult{Verdict: "pass"})
+}
+
+// gateFailure is the failure of the gate round a fix step's params name,
+// or "" when that step is not a failed gate round.
+func (s *stepRun) gateFailure() string {
+	var r gateResult
+	_ = json.Unmarshal(s.claim.Results[s.params.Findings], &r)
+	return r.Failure
+}
+
+// fixGate runs a session on a failed gate round, refuses a change to the
+// gate, and commits and pushes the rest. It does not run the gate: the next
+// round does. A commit for this round already on the branch means an
+// earlier attempt finished the session, so it is only pushed again.
+func (s *stepRun) fixGate(ctx context.Context, failure string) outcome {
+	t, cfg, failed := s.prepare(ctx)
+	if failed != nil {
+		return *failed
+	}
+	subject := "Make the gate pass after " + s.params.Findings
+	done, err := t.hasSubject(ctx, subject)
+	if err != nil {
+		return retry(err)
+	}
+	if !done {
+		s.e.stage(ctx, s.claim, stageSessionRunning)
+		if err := s.e.session(ctx, t.dir, fixGateBrief(s.claim.Item, s.repo, cfg.Gate, failure), cfg.SessionTimeout); err != nil {
+			return retry(err)
+		}
+		if question, ok := readNote(t.dir, blockedPath); ok {
+			dropNotes(t.dir)
+			return outcome{blocked: question}
+		}
+		dropNotes(t.dir)
+		if o := s.refuseGateChange(ctx, t, cfg); o != nil {
+			return *o
+		}
+		clean, err := t.clean(ctx)
+		if err != nil {
+			return retry(err)
+		}
+		if clean {
+			return retry(errors.New("the session made no changes for the failed gate"))
+		}
+		if _, err := t.commit(ctx, subject); err != nil {
+			return retry(err)
+		}
+	}
+	if err := t.push(ctx); err != nil {
+		return pushFailure(err)
+	}
+	head, err := t.head(ctx)
+	if err != nil {
+		return retry(err)
+	}
+	s.e.stage(ctx, s.claim, stageSessionFinished)
+	return succeeded(headResult{Head: head})
+}
+
+// refuseGateChange fails the step, for good, when a session that was asked
+// to make the gate pass changed or deleted a file that defines the gate:
+// the repository's config or a file the gate command names. A new file is
+// not a change to the gate. It returns nil when there was none.
+func (s *stepRun) refuseGateChange(ctx context.Context, t *tree, cfg repoconfig.Config) *outcome {
+	changed, err := t.changed(ctx)
+	if err != nil {
+		o := retry(err)
+		return &o
+	}
+	gateFiles := gateFiles(cfg.Gate)
+	for _, path := range changed {
+		if slices.Contains(gateFiles, path) {
+			o := final(fmt.Errorf("the session asked to make the gate pass changed %s, which defines the gate; a session may not change the gate to pass it, so a person must look at the branch", path))
+			return &o
+		}
+	}
+	return nil
+}
+
+// gateFiles are the paths that define a gate command: the repository's
+// config, each word of the command that reads as a relative path, and the
+// root makefiles when the command runs make. Words are not checked against
+// the tree, so an unusual word only widens what a session may not change.
+func gateFiles(command string) []string {
+	files := []string{repoconfig.Path}
+	words := strings.FieldsFunc(command, func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(`;&|()'"`+"`", r) })
+	for _, w := range words {
+		if w == "make" {
+			files = append(files, "Makefile", "makefile", "GNUmakefile")
+			continue
+		}
+		if p := path.Clean(w); filepath.IsLocal(p) && !strings.HasPrefix(w, "-") {
+			files = append(files, p)
+		}
+	}
+	return files
 }
 
 // secretScan scans the lines the branch adds for credentials. It only reads.
@@ -511,6 +631,9 @@ func (s *stepRun) repairGate(ctx context.Context, t *tree, cfg repoconfig.Config
 		return &outcome{blocked: question}
 	}
 	dropNotes(t.dir)
+	if o := s.refuseGateChange(ctx, t, cfg); o != nil {
+		return o
+	}
 	clean, err := t.clean(ctx)
 	if err != nil {
 		o := retry(err)

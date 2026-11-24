@@ -580,6 +580,21 @@ func TestFixRepairsItsGate(t *testing.T) {
 			t.Errorf("fix = %+v after %d sessions", r, len(f.agent.Requests))
 		}
 	})
+	t.Run("a repair that changes the gate is refused", func(t *testing.T) {
+		f := newFixture(t, "test -f never.txt || { echo 'error: never'; exit 1; }")
+		results := f.chain()
+		results[testRepo+"/review-1"] = reviewResult{Verdict: "changes", Findings: "add fixed.txt"}
+		f.agent.RunFunc = func(c context.Context, req harness.Request) error {
+			if strings.Contains(req.Prompt, "the repository's gate command failed") {
+				return writes(map[string]string{".factory/config.toml": "gate = \"true\"\n"})(c, req)
+			}
+			return writes(map[string]string{"fixed.txt": "ok"})(c, req)
+		}
+		r := f.e.run(ctx, f.claim("fix", params, results)).report()
+		if r.Outcome != "failed" || r.Retryable || !strings.Contains(r.Reason, ".factory/config.toml") {
+			t.Errorf("fix = %+v", r)
+		}
+	})
 	t.Run("a repair that changes nothing fails with the gate's reason", func(t *testing.T) {
 		f := newFixture(t, "test -f never.txt || { echo 'error: never'; exit 1; }")
 		results := f.chain()
@@ -595,6 +610,83 @@ func TestFixRepairsItsGate(t *testing.T) {
 			t.Errorf("fix = %+v", r)
 		}
 	})
+}
+
+// TestGateRounds reports a failed gate as a verdict while a fix round is
+// left, and fails the step on the last round with the rounds and the output.
+func TestGateRounds(t *testing.T) {
+	ctx := t.Context()
+	f := newFixture(t, "echo 'error: the gate broke'; exit 1")
+	results := f.chain()
+	r := mustSucceed(t, f.e.run(ctx, f.claim("gate", map[string]any{"round": 1, "last": false}, results)))
+	got := asMap(t, r.Result)
+	if got["verdict"] != "fail" || !strings.Contains(fmt.Sprint(got["failure"]), "error: the gate broke") {
+		t.Errorf("gate-1 = %v, want verdict fail with the failure", got)
+	}
+	last := f.e.run(ctx, f.claim("gate", map[string]any{"round": 3, "last": true}, results)).report()
+	if last.Outcome != "failed" || last.Retryable || !strings.Contains(last.Reason, "all 3 runs") || !strings.Contains(last.Reason, "error: the gate broke") {
+		t.Errorf("gate-3 = %+v, want final with the runs and the output", last)
+	}
+
+	pass := newFixture(t, "true")
+	if got := asMap(t, mustSucceed(t, pass.e.run(ctx, pass.claim("gate", map[string]any{"round": 1, "last": false}, pass.chain()))).Result); got["verdict"] != "pass" {
+		t.Errorf("passing gate = %v, want verdict pass", got)
+	}
+}
+
+// TestFixGate hands a session a failed gate round's failure, commits and
+// pushes its change once, and leaves the gate to the next round.
+func TestFixGate(t *testing.T) {
+	ctx := t.Context()
+	marker := filepath.Join(t.TempDir(), "gate-ran")
+	f := newFixture(t, "touch "+marker+"; test -f repaired.txt")
+	results := f.chain()
+	results[testRepo+"/gate-1"] = map[string]any{"verdict": "fail", "failure": "error: repaired.txt is missing"}
+	params := map[string]any{"round": 1, "findings": testRepo + "/gate-1"}
+	f.agent.RunFunc = writes(map[string]string{"repaired.txt": "ok"})
+	r := mustSucceed(t, f.e.run(ctx, f.claim("fix", params, results)))
+	if prompt := f.agent.Requests[len(f.agent.Requests)-1].Prompt; !strings.HasPrefix(prompt, gateFixLead) || !strings.Contains(prompt, "error: repaired.txt is missing") {
+		t.Errorf("the fix-gate prompt does not carry the failure:\n%s", prompt)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Error("fix-gate ran the gate; the next gate round runs it")
+	}
+	bare := filepath.Join(f.origin, testRepo+".git")
+	if git(t, bare, "rev-parse", testBranch) != asMap(t, r.Result)["head"] {
+		t.Error("the fix was not pushed")
+	}
+	if msg := git(t, bare, "log", "-1", "--format=%s", testBranch); msg != "Make the gate pass after "+testRepo+"/gate-1" {
+		t.Errorf("subject = %q", msg)
+	}
+	sessions := len(f.agent.Requests)
+	f.e.cfg.WorkDir = t.TempDir()
+	mustSucceed(t, f.e.run(ctx, f.claim("fix", params, results)))
+	if len(f.agent.Requests) != sessions {
+		t.Error("a retried fix-gate ran the session again over a pushed fix")
+	}
+
+	for _, c := range []struct{ name, gate, file string }{
+		{"the repository config", "true", ".factory/config.toml"},
+		{"a file the gate command names", "sh ./scripts/check.sh", "scripts/check.sh"},
+		{"the Makefile of a make gate", "make check", "Makefile"},
+	} {
+		t.Run("a session that changes "+c.name+" is refused", func(t *testing.T) {
+			f := newFixture(t, c.gate)
+			seed := map[string]string{c.file: "# the gate\n", ".factory/config.toml": fmt.Sprintf("gate = %q\n", c.gate)}
+			f.origin = newOrigin(t, seed)
+			f.e.cfg.GitURL = "file://" + f.origin
+			results := f.chain()
+			results[testRepo+"/gate-1"] = map[string]any{"verdict": "fail", "failure": "error: broke"}
+			f.agent.RunFunc = writes(map[string]string{c.file: "# weakened\n", "other.txt": "x"})
+			r := f.e.run(ctx, f.claim("fix", params, results)).report()
+			if r.Outcome != "failed" || r.Retryable || !strings.Contains(r.Reason, c.file) {
+				t.Errorf("fix-gate = %+v, want final naming %s", r, c.file)
+			}
+			if got := git(t, filepath.Join(f.origin, testRepo+".git"), "log", "-1", "--format=%s", testBranch); strings.HasPrefix(got, "Make the gate pass") {
+				t.Error("the refused change was pushed")
+			}
+		})
+	}
 }
 
 func TestMerge(t *testing.T) {

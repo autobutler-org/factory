@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/autobutler-org/factory/internal/repoconfig"
 )
 
 // Ported from schmeide's brief, reviewBrief and fixBrief. The prompts say
@@ -26,6 +28,10 @@ const (
 // reviewLead is the first sentence of a review prompt. No other prompt
 // starts this way, so a fake agent can tell the sessions apart.
 const reviewLead = "You are reviewing the change for a pull request that is already open."
+
+// gateFixLead is the first sentence of a fix-gate prompt, for a fake agent
+// to tell it apart as it does a review.
+const gateFixLead = "You are working on a factory work item, and the repository's gate command failed on its branch."
 
 // task describes the work item for a prompt.
 func task(item Item, repo string) string {
@@ -111,6 +117,25 @@ Make the gate pass, with the smallest change that fixes the cause, and keep what
 
 %s
 `, task(item, repo), gate, strings.TrimSpace(reason), gateOutputPath, blockedNote)
+}
+
+// fixGateBrief is the prompt for a fix-gate session: a gate round failed
+// on the change and the next round runs the gate again. failure is the
+// gate's failure reason, which quotes the failing lines and the end of the
+// output.
+func fixGateBrief(item Item, repo, gate, failure string) string {
+	return fmt.Sprintf(`%s
+
+%s
+The gate command is: %s
+
+How it failed:
+%s
+
+Make the gate pass, with the smallest change that fixes the cause, and keep what the change was for. Do not weaken the gate: do not change %s, the files the gate command names, or the checks the gate runs to make them pass more easily. Follow the repository's own conventions. Stay inside this directory. Do not commit, push or open a pull request: the gate runs again once you are done.
+
+%s
+`, gateFixLead, task(item, repo), gate, strings.TrimSpace(failure), repoconfig.Path, blockedNote)
 }
 
 // readNote reads and removes the file a session left at rel. ok is false

@@ -320,6 +320,20 @@ func (t *tree) clean(ctx context.Context) (bool, error) {
 	return out == "", err
 }
 
+// changed lists the paths an uncommitted change modifies or deletes,
+// including the old side of a rename; a new file is not listed. It stages
+// the change to see them.
+func (t *tree) changed(ctx context.Context) ([]string, error) {
+	if _, err := t.git(ctx, t.dir, "add", "-A"); err != nil {
+		return nil, err
+	}
+	out, err := t.git(ctx, t.dir, "diff", "--cached", "--no-renames", "--diff-filter=a", "--name-only")
+	if err != nil || out == "" {
+		return nil, err
+	}
+	return strings.Split(out, "\n"), nil
+}
+
 // discard drops every uncommitted change, as after a review that must leave
 // the branch as it found it.
 func (t *tree) discard(ctx context.Context) error {

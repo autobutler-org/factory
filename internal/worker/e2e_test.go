@@ -46,7 +46,7 @@ type env struct {
 	api    string
 	origin string
 	// agentDir holds the fake agent, its wrapper, and the scripts the
-	// wrapper picks between: implement and review.
+	// wrapper picks between: implement, review and fixgate.
 	agentDir string
 	marker   string
 	// config is the .factory/config.toml on origin's main.
@@ -106,12 +106,14 @@ func newEnv(t *testing.T, gate string, maxAttempts int) *env {
 	run(t, seed, "git", "push", "-q", bare, "main")
 
 	// The agent: cmd/fakeagent, behind a wrapper that runs the review script
-	// for a review prompt and the implement script for any other.
+	// for a review prompt, the fixgate script for a fix-gate prompt, and the
+	// implement script for any other.
 	run(t, ".", "go", "build", "-o", filepath.Join(e.agentDir, "fakeagent"), "github.com/autobutler-org/factory/cmd/fakeagent")
 	wrapper := `#!/bin/sh
 prompt=$(cat)
 case "$prompt" in
 "You are reviewing"*) script=review ;;
+"You are working on a factory work item, and the repository's gate command failed"*) script=fixgate ;;
 *) script=implement ;;
 esac
 FAKEAGENT_SCRIPT=$(cat "` + e.agentDir + `/$script") exec "` + e.agentDir + `/fakeagent" "$@"
@@ -121,6 +123,7 @@ FAKEAGENT_SCRIPT=$(cat "` + e.agentDir + `/$script") exec "` + e.agentDir + `/fa
 	}
 	e.script("implement", "stdout working\nedit hello.txt hello\nedit .factory/pr.md Add hello")
 	e.script("review", "edit .factory/review.md pass")
+	e.script("fixgate", "edit fixed.txt $$")
 
 	res, err := e.svc.Upsert(t.Context(), work.NewItem{
 		Source: "jira", ExternalID: "F-1", ExternalURL: "https://jira.test/browse/F-1",
@@ -272,14 +275,41 @@ func TestE2EKilledMidStepResumesWithoutASecondPullRequest(t *testing.T) {
 	e.inReview()
 }
 
+// TestE2EFixGateRepairsTheGate fails the first gate run, has a fix-gate
+// session change the tree, passes the second run, and goes on to open_pr.
+func TestE2EFixGateRepairsTheGate(t *testing.T) {
+	e := newEnv(t, "test -f hello.txt && test -f fixed.txt && touch MARKER", 3)
+	e.script("fixgate", "edit fixed.txt fixed")
+	if err := e.worker(t.Context(), "sandbox-1"); err != nil {
+		t.Fatal(err)
+	}
+	e.inReview()
+	for key, want := range map[string]string{
+		"gate-1": "succeeded", "fix-gate-1": "succeeded", "gate-2": "succeeded",
+		"fix-gate-2": "skipped", "gate-3": "skipped", "open_pr": "succeeded",
+	} {
+		if s := e.step(repo + "/" + key); s.State != want {
+			t.Errorf("%s = %s, want %s", key, s.State, want)
+		}
+	}
+	if s := e.step(repo + "/gate-1"); !strings.Contains(string(s.Result), `"fail"`) {
+		t.Errorf("gate-1 result = %s, want verdict fail", s.Result)
+	}
+	pulls, _ := e.gh.Snapshot()
+	out, err := exec.CommandContext(t.Context(), "git", "--git-dir", filepath.Join(e.origin, repo+".git"), "show", pulls[0].Head+":fixed.txt").Output()
+	if err != nil || string(out) != "fixed\n" {
+		t.Errorf("pushed fixed.txt = %q, %v", out, err)
+	}
+}
+
 func TestE2EGateFailureFailsTheItemWithTheOutput(t *testing.T) {
 	e := newEnv(t, "echo the gate says no; exit 1", 3)
 	if err := e.worker(t.Context(), "sandbox-1"); err != nil {
 		t.Fatal(err)
 	}
 	item := e.state()
-	if item.State != "failed" || !strings.Contains(item.StateReason, "the gate says no") {
-		t.Fatalf("item = %s %q, want failed with the gate output", item.State, item.StateReason)
+	if item.State != "failed" || !strings.Contains(item.StateReason, "the gate says no") || !strings.Contains(item.StateReason, "all 3 runs") {
+		t.Fatalf("item = %s %q, want failed with the runs and the gate output", item.State, item.StateReason)
 	}
 	events, _ := e.svc.Events(t.Context(), e.item.ID)
 	found := false
@@ -289,13 +319,18 @@ func TestE2EGateFailureFailsTheItemWithTheOutput(t *testing.T) {
 			Reason string `json:"reason"`
 		}
 		_ = json.Unmarshal(ev.Payload, &p)
-		found = found || (ev.Type == work.EventStepResult && p.Key == repo+"/gate" && strings.Contains(p.Reason, "the gate says no"))
+		found = found || (ev.Type == work.EventStepResult && p.Key == repo+"/gate-3" && strings.Contains(p.Reason, "the gate says no"))
 	}
 	if !found {
-		t.Error("no step result event for the gate carries its output")
+		t.Error("no step result event for the last gate round carries its output")
 	}
-	if s := e.step(repo + "/gate"); s.Attempts != 1 {
-		t.Errorf("gate attempts = %d, want 1: a gate failure is not retried", s.Attempts)
+	for _, key := range []string{"fix-gate-1", "fix-gate-2"} {
+		if s := e.step(repo + "/" + key); s.State != "succeeded" {
+			t.Errorf("%s = %s, want succeeded: each fix round runs", key, s.State)
+		}
+	}
+	if s := e.step(repo + "/gate-3"); s.Attempts != 1 {
+		t.Errorf("gate-3 attempts = %d, want 1: a gate failure is not retried", s.Attempts)
 	}
 	if pulls, _ := e.gh.Snapshot(); len(pulls) != 0 {
 		t.Errorf("pulls = %+v, want none", pulls)

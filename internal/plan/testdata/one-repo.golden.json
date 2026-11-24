@@ -24,14 +24,72 @@
       ]
     },
     {
-      "key": "o/quark/gate",
+      "key": "o/quark/gate-1",
       "kind": "gate",
       "params": {
-        "repo": "o/quark"
+        "last": false,
+        "repo": "o/quark",
+        "round": 1
       },
       "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
       "depends_on": [
         "o/quark/implement"
+      ]
+    },
+    {
+      "key": "o/quark/fix-gate-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/quark/gate-1",
+        "repo": "o/quark",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "condition": "o/quark/gate-1 == fail",
+      "depends_on": [
+        "o/quark/gate-1"
+      ]
+    },
+    {
+      "key": "o/quark/gate-2",
+      "kind": "gate",
+      "params": {
+        "last": false,
+        "repo": "o/quark",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "condition": "o/quark/gate-1 == fail",
+      "depends_on": [
+        "o/quark/fix-gate-1"
+      ]
+    },
+    {
+      "key": "o/quark/fix-gate-2",
+      "kind": "fix",
+      "params": {
+        "findings": "o/quark/gate-2",
+        "repo": "o/quark",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "condition": "o/quark/gate-2 == fail",
+      "depends_on": [
+        "o/quark/gate-2"
+      ]
+    },
+    {
+      "key": "o/quark/gate-3",
+      "kind": "gate",
+      "params": {
+        "last": true,
+        "repo": "o/quark",
+        "round": 3
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
+      "condition": "o/quark/gate-2 == fail",
+      "depends_on": [
+        "o/quark/fix-gate-2"
       ]
     },
     {
@@ -42,7 +100,7 @@
       },
       "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/quark",
       "depends_on": [
-        "o/quark/gate"
+        "o/quark/gate-3"
       ]
     },
     {
