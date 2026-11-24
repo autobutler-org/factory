@@ -528,7 +528,7 @@ const pollPulls = `-- name: PollPulls :many
 SELECT o.work_item_id, o.repo, o.branch, o.url,
        s.id AS step_id, s.kind AS step_kind, s.key AS step_key, s.available_at AS ready_since
 FROM work_outputs o
-JOIN work_items w ON w.id = o.work_item_id AND w.state IN ('in_progress', 'in_review')
+JOIN work_items w ON w.id = o.work_item_id AND w.state IN ('in_progress', 'in_review', 'blocked', 'failed')
 LEFT JOIN work_graphs g ON g.work_item_id = w.id AND g.state = 'current'
 LEFT JOIN work_steps s ON s.graph_id = g.id AND s.state = 'ready' AND s.kind = ANY ($1::text[])
      AND lower(s.params->>'repo') = lower(o.repo)
@@ -549,8 +549,9 @@ type PollPullsRow struct {
 	ReadySince *time.Time `json:"ready_since"`
 }
 
-// The open pull requests of the items being worked, for the server's
-// poller, highest-priority item first. The newest pull request of each
+// The open pull requests of the items being worked, blocked or failed, for
+// the server's poller, highest-priority item first. A blocked or failed item
+// is polled so a person's merge completes it; it has no ready step. The newest pull request of each
 // repository carries the ready wait step of that repository's chain in the
 // item's current graph, if any; ready_since is when it started waiting.
 func (q *Queries) PollPulls(ctx context.Context, waitKinds []string) ([]PollPullsRow, error) {

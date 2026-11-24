@@ -73,12 +73,20 @@ func TestPollPullsListsOpenPullsWithTheirWait(t *testing.T) {
 		t.Errorf("no step_completed event by %s with result %s", adapter.ID, observed)
 	}
 
-	// An item no longer being worked is not polled.
+	// A blocked item is still polled, so a person's merge completes it, but
+	// without a wait step: its steps were canceled.
 	if _, err := svc.Transition(ctx, item.ID, work.Blocked, "stop", adapter); err != nil {
 		t.Fatal(err)
 	}
+	if rows, err := svc.PollPulls(ctx); err != nil || len(rows) != 2 || rows[0].StepID != nil || rows[1].StepID != nil {
+		t.Errorf("PollPulls of a blocked item = %+v, %v; want both pull requests and no wait", rows, err)
+	}
+	// An item that is done with is not polled.
+	if _, err := svc.Transition(ctx, item.ID, work.WontFix, "drop", adapter); err != nil {
+		t.Fatal(err)
+	}
 	if rows, err := svc.PollPulls(ctx); err != nil || len(rows) != 0 {
-		t.Errorf("PollPulls of a blocked item = %+v, %v; want none", rows, err)
+		t.Errorf("PollPulls of a wont_fix item = %+v, %v; want none", rows, err)
 	}
 }
 
@@ -148,6 +156,47 @@ func TestObservePull(t *testing.T) {
 			if o.Url == b && o.Status != work.OutputClosed {
 				t.Errorf("output %s = %s, want closed", o.Url, o.Status)
 			}
+		}
+	})
+
+	for _, state := range []string{work.Failed, work.Blocked} {
+		t.Run("a "+state+" item completes when its pull requests merge", func(t *testing.T) {
+			svc, item := start(t)
+			if _, err := svc.Transition(ctx, item.ID, state, "checks failed", adapter); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.ObservePull(ctx, item.ID, pull("o/a", a, work.OutputMerged), adapter); err != nil {
+				t.Fatal(err)
+			}
+			if got := itemState(t, svc, item.ID); got != state {
+				t.Fatalf("item with o/b still open = %s, want %s", got, state)
+			}
+			if changed, err := svc.ObservePull(ctx, item.ID, pull("o/b", b, work.OutputMerged), adapter); err != nil || !changed {
+				t.Fatalf("ObservePull merged = %v, %v", changed, err)
+			}
+			got, err := svc.Get(ctx, item.ID)
+			if err != nil || got.State != work.Completed || got.StateReason != "pull request "+b+" was merged" {
+				t.Errorf("item = %s %q, %v; want completed, naming the merge", got.State, got.StateReason, err)
+			}
+		})
+	}
+
+	t.Run("a closed pull request keeps a late merge from completing the item", func(t *testing.T) {
+		svc, item := start(t)
+		if _, err := svc.Transition(ctx, item.ID, work.Failed, "checks failed", adapter); err != nil {
+			t.Fatal(err)
+		}
+		if changed, err := svc.ObservePull(ctx, item.ID, pull("o/b", b, work.OutputClosed), adapter); err != nil || !changed {
+			t.Fatalf("ObservePull closed = %v, %v", changed, err)
+		}
+		if got := itemState(t, svc, item.ID); got != work.Failed {
+			t.Fatalf("item = %s, want failed: a close does not move it", got)
+		}
+		if _, err := svc.ObservePull(ctx, item.ID, pull("o/a", a, work.OutputMerged), adapter); err != nil {
+			t.Fatal(err)
+		}
+		if got := itemState(t, svc, item.ID); got != work.Failed {
+			t.Errorf("item = %s, want failed: o/b was closed, so a person decides", got)
 		}
 	})
 

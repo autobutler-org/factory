@@ -44,8 +44,10 @@ stateDiagram-v2
     blocked --> design
     blocked --> ready
     blocked --> wont_fix
+    blocked --> completed: its pull requests merged
     failed --> ready: retry
     failed --> wont_fix
+    failed --> completed: its pull requests merged
     completed --> design: reopen
     completed --> ready: reopen
     wont_fix --> design: reopen
@@ -95,6 +97,10 @@ The output of the factory is code landed in repositories, so outputs drive the e
    the API) re-apply the rule: once no output is open and at least one is merged, the item moves to `completed`.
    The poll records a pull request closed without merging as `closed` and moves an item being worked to `blocked`
    instead (`ObservePull`, [workers.md](workers.md#polling-the-code-host)).
+4. A `failed` or `blocked` item is still polled while it has an open pull request, because a person may fix and merge
+   what the factory gave up on. When a merge leaves every output of such an item merged (none open, none `closed`),
+   the item moves to `completed` with the reason `pull request <url> was merged`. A `closed` output keeps it where it
+   is, so a person decides; they can also move it to `completed` themselves once an output has landed.
 
 An item is never `completed` with an output still open: a direct transition to `completed` is refused with
 `ErrOutputsPending` unless at least one output is merged and none is open. A commit is `merged` from the start.
