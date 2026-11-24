@@ -166,9 +166,13 @@ func (s *stepRun) workspace(ctx context.Context) outcome {
 	return succeeded(workspaceResult{Branch: t.branch, Base: t.base, Head: head})
 }
 
-// headResult is the result of a step that moves the branch.
+// headResult is the result of a step that moves the branch. GateChanged
+// names the files that define the gate a session asked to make the gate
+// pass changed or deleted; open_pr and review read it from the claim's
+// results, and the planner holds the merge for a person's approval.
 type headResult struct {
-	Head string `json:"head"`
+	Head        string   `json:"head"`
+	GateChanged []string `json:"gate_changed,omitempty"`
 }
 
 // implement runs the writing session, commits its change with the pull
@@ -295,9 +299,9 @@ func (s *stepRun) gateFailure() string {
 	return r.Failure
 }
 
-// fixGate runs a session on a failed gate round, refuses a change to the
-// gate, and commits and pushes the rest. It does not run the gate: the next
-// round does. A commit for this round already on the branch means an
+// fixGate runs a session on a failed gate round, and commits and pushes its
+// change, naming in its result any file that defines the gate it changed.
+// It does not run the gate: the next round does. A commit for this round already on the branch means an
 // earlier attempt finished the session, so it is only pushed again.
 func (s *stepRun) fixGate(ctx context.Context, failure string) outcome {
 	t, cfg, failed := s.prepare(ctx)
@@ -319,9 +323,6 @@ func (s *stepRun) fixGate(ctx context.Context, failure string) outcome {
 			return outcome{blocked: question}
 		}
 		dropNotes(t.dir)
-		if o := s.refuseGateChange(ctx, t, cfg); o != nil {
-			return *o
-		}
 		clean, err := t.clean(ctx)
 		if err != nil {
 			return retry(err)
@@ -340,28 +341,65 @@ func (s *stepRun) fixGate(ctx context.Context, failure string) outcome {
 	if err != nil {
 		return retry(err)
 	}
+	changed, err := gateChanges(ctx, t, cfg, subject)
+	if err != nil {
+		return retry(err)
+	}
 	s.e.stage(ctx, s.claim, stageSessionFinished)
-	return succeeded(headResult{Head: head})
+	return succeeded(headResult{Head: head, GateChanged: changed})
 }
 
-// refuseGateChange fails the step, for good, when a session that was asked
-// to make the gate pass changed or deleted a file that defines the gate:
-// the repository's config or a file the gate command names. A new file is
-// not a change to the gate. It returns nil when there was none.
-func (s *stepRun) refuseGateChange(ctx context.Context, t *tree, cfg repoconfig.Config) *outcome {
-	changed, err := t.changed(ctx)
+// gateChanges are the files that define the gate which the branch's commit
+// with subject modified or deleted: the repository's config or a file the
+// gate command names. A new file is not a change to the gate. It is read
+// from the commit, so a retry that finds the commit pushed sees it too.
+func gateChanges(ctx context.Context, t *tree, cfg repoconfig.Config, subject string) ([]string, error) {
+	changed, err := t.changedBy(ctx, subject)
 	if err != nil {
-		o := retry(err)
-		return &o
+		return nil, err
 	}
-	gateFiles := gateFiles(cfg.Gate)
+	gate := gateFiles(cfg.Gate)
+	var out []string
 	for _, path := range changed {
-		if slices.Contains(gateFiles, path) {
-			o := final(fmt.Errorf("the session asked to make the gate pass changed %s, which defines the gate; a session may not change the gate to pass it, so a person must look at the branch", path))
-			return &o
+		if slices.Contains(gate, path) {
+			out = append(out, path)
 		}
 	}
-	return nil
+	return out, nil
+}
+
+// gateChanged are the files that define the gate a session in this
+// repository's chain changed, from the claim's results, with own added.
+func (s *stepRun) gateChanged(own []string) []string {
+	files := slices.Clone(own)
+	for key, raw := range s.claim.Results {
+		var r headResult
+		if strings.HasPrefix(key, s.repo+"/") && json.Unmarshal(raw, &r) == nil {
+			files = append(files, r.GateChanged...)
+		}
+	}
+	slices.Sort(files)
+	return slices.Compact(files)
+}
+
+// gateNoteMarker starts the note a pull request body ends with when a
+// session changed the gate; the body is cut there before a new note.
+const gateNoteMarker = "<!-- factory: gate changed -->"
+
+// withGateNote is body with its gate note replaced by one naming files, or
+// with none when files is empty.
+func withGateNote(body string, files []string) string {
+	body, _, _ = strings.Cut(body, gateNoteMarker)
+	if len(files) == 0 {
+		return body
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(body, "\n"))
+	b.WriteString("\n\n" + gateNoteMarker + "\n> [!WARNING]\n> **The gate was changed.** A session asked to make the gate pass changed these files, which define it. Check that the gate was not weakened; this pull request waits for a person's approval.\n>\n")
+	for _, f := range files {
+		fmt.Fprintf(&b, "> - `%s`\n", f)
+	}
+	return b.String()
 }
 
 // gateFiles are the paths that define a gate command: the repository's
@@ -416,7 +454,7 @@ func (s *stepRun) pullBody(summary string) string {
 			siblings = append(siblings, o.URL)
 		}
 	}
-	return codehost.PullBody(s.repo, summary, s.claim.Item.ExternalURL, siblings)
+	return withGateNote(codehost.PullBody(s.repo, summary, s.claim.Item.ExternalURL, siblings), s.gateChanged(nil))
 }
 
 // updatePull rewrites the title and body of the recorded pull request.
@@ -504,7 +542,7 @@ func (s *stepRun) review(ctx context.Context) outcome {
 		return *failed
 	}
 	s.e.stage(ctx, s.claim, stageReview)
-	err := s.e.session(ctx, t.dir, reviewBrief(s.claim.Item, s.repo), cfg.SessionTimeout)
+	err := s.e.session(ctx, t.dir, reviewBrief(s.claim.Item, s.repo, s.gateChanged(nil)), cfg.SessionTimeout)
 	verdict, findings, verdictErr := readVerdict(t.dir)
 	if discardErr := t.discard(ctx); discardErr != nil && err == nil {
 		err = discardErr
@@ -526,7 +564,9 @@ func (s *stepRun) review(ctx context.Context) outcome {
 // for this round already on the branch means an earlier attempt finished the
 // session, so it is gated and pushed again. When the gate fails, a second
 // session is handed the gate's output to make it pass, and the gate runs
-// again; a second failure is final.
+// again; a second failure is final. A repair that changed a file that
+// defines the gate is named in the result and flagged in the pull request
+// body.
 func (s *stepRun) fix(ctx context.Context) outcome {
 	// A review's findings, or the failed checks of an await_checks round.
 	var r struct {
@@ -603,9 +643,43 @@ func (s *stepRun) fix(ctx context.Context) outcome {
 	if err != nil {
 		return retry(err)
 	}
+	changed, err := gateChanges(ctx, t, cfg, repairSubject(subject))
+	if err != nil {
+		return retry(err)
+	}
+	if len(changed) > 0 {
+		if err := s.flagPull(ctx, t.branch, s.gateChanged(changed)); err != nil {
+			return retry(err)
+		}
+	}
 	s.e.stage(ctx, s.claim, stageSessionFinished)
-	return succeeded(headResult{Head: head})
+	return succeeded(headResult{Head: head, GateChanged: changed})
 }
+
+// flagPull rewrites the gate note of the recorded pull request's body to
+// name files, keeping its title and the rest of its body.
+func (s *stepRun) flagPull(ctx context.Context, branch string, files []string) error {
+	o, ok := s.pull()
+	if !ok {
+		return fmt.Errorf("no pull request is recorded for %s, so the gate change cannot be flagged on it", s.repo)
+	}
+	n, err := codehost.PullNumber(o.URL)
+	if err != nil {
+		return err
+	}
+	host := s.e.cfg.Host(s.repo, s.tokens)
+	pull, found, err := host.FindPull(ctx, branch, "all")
+	if err != nil {
+		return err
+	}
+	if !found || pull.Number != n {
+		return fmt.Errorf("pull request %s was not found on branch %s, so the gate change cannot be flagged on it", o.URL, branch)
+	}
+	return host.UpdatePull(ctx, pull.Number, pull.Title, withGateNote(pull.Body, files))
+}
+
+// repairSubject is the subject of a repair session's commit in fix.
+func repairSubject(subject string) string { return "Make the gate pass: " + subject }
 
 // repairGate runs a session on a failed gate: the reason inline, the whole
 // output kept in gateOutputPath, and commits what it changed. It returns
@@ -634,9 +708,6 @@ func (s *stepRun) repairGate(ctx context.Context, t *tree, cfg repoconfig.Config
 		return &outcome{blocked: question}
 	}
 	dropNotes(t.dir)
-	if o := s.refuseGateChange(ctx, t, cfg); o != nil {
-		return o
-	}
 	clean, err := t.clean(ctx)
 	if err != nil {
 		o := retry(err)
@@ -645,7 +716,7 @@ func (s *stepRun) repairGate(ctx context.Context, t *tree, cfg repoconfig.Config
 	if clean {
 		return &gateFailed
 	}
-	if _, err := t.commit(ctx, "Make the gate pass: "+subject); err != nil {
+	if _, err := t.commit(ctx, repairSubject(subject)); err != nil {
 		o := retry(err)
 		return &o
 	}

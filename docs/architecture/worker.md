@@ -64,8 +64,8 @@ Every step has the repository in `params.repo`. A sandbox step works in `<work-d
 | `secret_scan` | Scans the lines the branch adds relative to its base for credential-shaped literals and the step's own token (`internal/secretscan`). | `{}` | Only reads. | Final; the reason names files, lines and kinds, never the secret. |
 | `open_pr` | Commits anything left, pushes, and opens the pull request from the branch into the base. The title and body come from the branch's first commit; the body is `codehost.PullBody` with the item's `external_url` and the item's other pull requests. Records the pull request as an output, first in a stage report, then in the result. | `{"url"}` | A pull request already in `outputs` for the repository is the result, untouched. One opened by an attempt that died before recording it is found by its branch (`FindPull`). | Code host errors: retryable. |
 | `review` | Runs a review session; the reviewer writes its verdict to `.factory/review.md`. Anything the session left in the worktree is discarded. | `{"verdict": "pass" or "changes", "findings"}` | Changes nothing. | No or malformed verdict, session crash: retryable. |
-| `fix` | Runs a session on the findings of the step named by `params.findings` (read from `results`: a review's `findings`, or an `await_checks` round's `failed_checks`), commits as `Address the findings of <that step's key>`, runs the gate, and pushes, which updates the open pull request. When the session rewrites `.factory/pr.md`, the open pull request's title and body are replaced from it (the body built as `open_pr` builds it), so a check that reads the pull request text can be fixed; that is a change on its own, and with no code change nothing is committed, gated or pushed. When that gate fails, a second session is handed the gate's failure reason and its whole output in `.factory/gate-output.txt`, its change is committed as `Make the gate pass: Address the findings of <key>`, and the gate runs again. | `{"head"}` | A commit with that subject already on the branch means the session finished: it is gated and pushed again. | Like `implement`; no change means neither code nor `.factory/pr.md`. A pull request text the code host refuses: retryable. A second gate failure, a repair session that changes nothing, or one that changes the gate is final. |
-| `fix` after a gate round (`fix-gate-K`) | When the step `params.findings` names has a `failure` in its result, runs a session on that failure (no pull request is open yet), refuses a change to the gate (below), commits as `Make the gate pass after <that step's key>`, and pushes. A `.factory/pr.md` it leaves is dropped: no pull request is open yet, and `open_pr` takes its text from the `implement` commit. It does not run the gate: `gate-K+1` does. | `{"head"}` | A commit with that subject already on the branch means the session finished: it is pushed again. | Like `implement`. A change to the gate: final. |
+| `fix` | Runs a session on the findings of the step named by `params.findings` (read from `results`: a review's `findings`, or an `await_checks` round's `failed_checks`), commits as `Address the findings of <that step's key>`, runs the gate, and pushes, which updates the open pull request. When the session rewrites `.factory/pr.md`, the open pull request's title and body are replaced from it (the body built as `open_pr` builds it), so a check that reads the pull request text can be fixed; that is a change on its own, and with no code change nothing is committed, gated or pushed. When that gate fails, a second session is handed the gate's failure reason and its whole output in `.factory/gate-output.txt`, its change is committed as `Make the gate pass: Address the findings of <key>`, and the gate runs again. A repair that changes the gate is flagged (below). | `{"head", "gate_changed"}` | A commit with that subject already on the branch means the session finished: it is gated and pushed again. | Like `implement`; no change means neither code nor `.factory/pr.md`. A pull request text the code host refuses: retryable. A second gate failure or a repair session that changes nothing is final. A pull request it cannot flag: retryable. |
+| `fix` after a gate round (`fix-gate-K`) | When the step `params.findings` names has a `failure` in its result, runs a session on that failure (no pull request is open yet), commits as `Make the gate pass after <that step's key>`, and pushes. A `.factory/pr.md` it leaves is dropped: no pull request is open yet, and `open_pr` takes its text from the `implement` commit. It does not run the gate: `gate-K+1` does. A change to the gate is flagged (below). | `{"head", "gate_changed"}` | A commit with that subject already on the branch means the session finished: it is pushed again. | Like `implement`. |
 | `merge` | Merges the recorded pull request, or adds it to the merge queue when its base has one, and records it merged. No sandbox. | `{"merged", "queued"}` | An output already merged, or a pull request the code host shows merged, is not merged again. | No pull request recorded: final. Code host errors: retryable. |
 
 `await_checks` and `await_approval` are never handed to a worker. A step of any other kind fails as final.
@@ -82,14 +82,27 @@ body, `source`, and `external_url` (or "created directly in the factory"). A ses
 `blocked.md` (a question for a person). The worker writes `gate-output.txt` for a session that repairs a failed gate
 in `fix`; it is removed the same way. The fix-gate prompt starts with its own sentence, so a fake agent can tell it
 apart, carries the failed round's reason inline (the failing lines and the last 3000 bytes of output; the whole
-output stays on the server), and tells the session not to weaken the gate.
+output stays on the server), and tells the session not to weaken the gate and that a change to it is flagged.
 
-A session asked to make a gate pass, in `fix-gate` or in the repair session of `fix`, may not change the gate. The
-worker stages the session's change and refuses, as a final failure naming the file, a change to or deletion of
-`.factory/config.toml`, a file the gate command names as a word (`./scripts/check.sh`), or the root `Makefile`,
-`makefile` or `GNUmakefile` when the command runs `make`. New files are allowed, so a gate such as `test -f out.txt`
-can be satisfied. Other ways to weaken a gate, such as loosening a linter config the `Makefile` reads, are left to
-the review rounds and a person.
+A session asked to make a gate pass, in `fix-gate` or in the repair session of `fix`, may change the gate when the
+fix needs it (a new `Makefile` target, a renamed script), but the change is flagged for review. The files that
+define the gate are `.factory/config.toml`, a file the gate command names as a word (`./scripts/check.sh`), and the
+root `Makefile`, `makefile` or `GNUmakefile` when the command runs `make`. The worker reads which of them the
+session's commit modified or deleted (a new file is not a change to the gate, so a gate such as `test -f out.txt`
+can be satisfied) and names them in the step's result as `gate_changed`; it is read from the commit, so a retry
+that finds the commit pushed reports it too. Then:
+
+- `open_pr` ends the pull request body with a marked note (a GitHub warning block after
+  `<!-- factory: gate changed -->`) naming every file the chain's sessions changed, from the claim's results. A
+  `fix` that rewrites the pull request text keeps the note, and a `fix` whose repair changed the gate rewrites it on
+  the open pull request.
+- Each `review` session is told which files changed and asked to request changes if the gate was weakened.
+- The planner's conditional `await_approval` runs, so the item waits for a person's approval even when the
+  repository merges without one ([graph.md](graph.md#planning)).
+
+The gate command itself is read from `.factory/config.toml` on the base branch, never from the branch, so a session
+that edits the config cannot change which command later gate rounds run; the edit is flagged all the same. Other ways
+to weaken a gate, such as loosening a linter config the `Makefile` reads, are left to the review rounds and a person.
 
 ### Gate output
 

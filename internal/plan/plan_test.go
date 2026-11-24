@@ -235,7 +235,7 @@ func TestReviewRoundsAreUnrolled(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys := strings.Join(keysOf(g), " ")
-	for _, want := range []string{"o/a/implement o/a/gate-1 o/a/fix-gate-1 o/a/gate-2 o/a/fix-gate-2 o/a/gate-3 o/a/secret_scan", "o/a/review-1 o/a/fix-1 o/a/review-2 o/a/fix-2 o/a/review-3 ", "o/a/await_checks-1 o/a/fix-checks-1 o/a/await_checks-2 o/a/merge"} {
+	for _, want := range []string{"o/a/implement o/a/gate-1 o/a/fix-gate-1 o/a/gate-2 o/a/fix-gate-2 o/a/gate-3 o/a/secret_scan", "o/a/review-1 o/a/fix-1 o/a/review-2 o/a/fix-2 o/a/review-3 ", "o/a/await_checks-1 o/a/fix-checks-1 o/a/await_checks-2 o/a/await_approval o/a/merge"} {
 		if !strings.Contains(keys, want) {
 			t.Errorf("keys %q lack %q", keys, want)
 		}
@@ -337,5 +337,84 @@ func TestKinds(t *testing.T) {
 	}
 	if !plan.IsWait(plan.AwaitChecks) || !plan.IsWait(plan.AwaitApproval) || plan.IsWait(plan.Merge) {
 		t.Error("only await_checks and await_approval are wait steps")
+	}
+}
+
+// TestApprovalWhenTheGateChanged plans await_approval in a chain that
+// merges without one, run only when a step before it in the chain changed
+// a file that defines the gate.
+func TestApprovalWhenTheGateChanged(t *testing.T) {
+	g, err := plan.Plan(plan.Item{ID: itemID, Repos: []string{"o/a", "o/b"}}, nil, plan.DefaultTemplate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var approval plan.Step
+	for _, s := range g.Steps {
+		if s.Key == "o/a/await_approval" {
+			approval = s
+		}
+	}
+	if approval.Condition != plan.ConditionGateChanged {
+		t.Fatalf("o/a/await_approval = %+v, want it with the condition %q", approval, plan.ConditionGateChanged)
+	}
+	before := map[string]plan.Status{}
+	for _, s := range g.Steps {
+		if s.Key == "o/a/await_approval" {
+			break
+		}
+		if strings.HasPrefix(s.Key, "o/a/") {
+			before[s.Key] = plan.Status{State: plan.Succeeded}
+		}
+	}
+	if got := plan.Next(g, status(g, before)); got["o/a/await_approval"] != plan.Skipped || got["o/a/merge"] != plan.Ready {
+		t.Errorf("gate unchanged: %v, want await_approval skipped and merge ready", got)
+	}
+	other := with(before, "o/b/workspace", plan.Status{State: plan.Succeeded, GateChanged: true})
+	if got := plan.Next(g, status(g, other)); got["o/a/await_approval"] != plan.Skipped {
+		t.Errorf("another chain changed its gate: %v, want o/a/await_approval skipped", got)
+	}
+	changed := map[string]plan.Status{"o/a/fix-gate-1": {State: plan.Succeeded, GateChanged: true}}
+	for k, v := range before {
+		if k != "o/a/fix-gate-1" {
+			changed[k] = v
+		}
+	}
+	if got := plan.Next(g, status(g, changed)); got["o/a/await_approval"] != plan.Ready || got["o/a/merge"] != "" {
+		t.Errorf("gate changed: %v, want await_approval ready and merge pending", got)
+	}
+
+	for _, c := range []struct {
+		name string
+		cfg  plan.RepoConfig
+		want string // the await_approval condition; "-" for no step
+	}{
+		{"required", plan.RepoConfig{ReviewRounds: 1, RequireApproval: true, Merge: true}, ""},
+		{"merge off", plan.RepoConfig{ReviewRounds: 1}, "-"},
+	} {
+		g, _ := plan.Plan(plan.Item{ID: itemID, Repos: []string{"o/a"}}, map[string]plan.RepoConfig{"o/a": c.cfg}, plan.DefaultTemplate())
+		got := "-"
+		for _, s := range g.Steps {
+			if s.Kind == plan.AwaitApproval {
+				got = s.Condition
+			}
+		}
+		if got != c.want {
+			t.Errorf("%s: await_approval condition %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestGateChanged(t *testing.T) {
+	cases := map[string]bool{
+		`{"head":"x","gate_changed":["Makefile"]}`: true,
+		`{"head":"x","gate_changed":[]}`:           false,
+		`{"head":"x"}`:                             false,
+		`null`:                                     false,
+		``:                                         false,
+	}
+	for result, want := range cases {
+		if got := plan.GateChanged(json.RawMessage(result)); got != want {
+			t.Errorf("%s: %v, want %v", result, got, want)
+		}
 	}
 }

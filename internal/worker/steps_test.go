@@ -580,7 +580,28 @@ func TestFixRepairsItsGate(t *testing.T) {
 			t.Errorf("fix = %+v after %d sessions", r, len(f.agent.Requests))
 		}
 	})
-	t.Run("a repair that changes the gate is refused", func(t *testing.T) {
+	t.Run("a repair that changes the gate is flagged on the pull request", func(t *testing.T) {
+		f := newFixture(t, "sh ./check.sh")
+		f.origin = newOrigin(t, map[string]string{"check.sh": "echo 'error: never'; exit 1\n", ".factory/config.toml": "gate = \"sh ./check.sh\"\n"})
+		f.e.cfg.GitURL = "file://" + f.origin
+		results := f.chain()
+		pr := mustSucceed(t, f.e.run(ctx, f.claim("open_pr", map[string]any{}, results))).Outputs[0]
+		results[testRepo+"/review-1"] = reviewResult{Verdict: "changes", Findings: "add fixed.txt"}
+		f.agent.RunFunc = func(c context.Context, req harness.Request) error {
+			if strings.Contains(req.Prompt, "the repository's gate command failed") {
+				return writes(map[string]string{"check.sh": "exit 0\n"})(c, req)
+			}
+			return writes(map[string]string{"fixed.txt": "ok"})(c, req)
+		}
+		r := mustSucceed(t, f.e.run(ctx, f.claim("fix", params, results, pr)))
+		if got := asMap(t, r.Result)["gate_changed"]; fmt.Sprint(got) != "[check.sh]" {
+			t.Errorf("gate_changed = %v, want [check.sh]", got)
+		}
+		if p := f.host.Pulls[0]; p.Title != "Add hello" || !strings.HasPrefix(p.Body, "Adds hello.txt.") || !strings.Contains(p.Body, gateNoteMarker) || !strings.Contains(p.Body, "`check.sh`") {
+			t.Errorf("pull request = %q\n%s", p.Title, p.Body)
+		}
+	})
+	t.Run("a repair cannot swap the gate command", func(t *testing.T) {
 		f := newFixture(t, "test -f never.txt || { echo 'error: never'; exit 1; }")
 		results := f.chain()
 		results[testRepo+"/review-1"] = reviewResult{Verdict: "changes", Findings: "add fixed.txt"}
@@ -590,8 +611,9 @@ func TestFixRepairsItsGate(t *testing.T) {
 			}
 			return writes(map[string]string{"fixed.txt": "ok"})(c, req)
 		}
+		// The gate is read from the base branch, so the edit does not pass it.
 		r := f.e.run(ctx, f.claim("fix", params, results)).report()
-		if r.Outcome != "failed" || r.Retryable || !strings.Contains(r.Reason, ".factory/config.toml") {
+		if r.Outcome != "failed" || r.Retryable || !strings.Contains(r.Reason, "error: never") {
 			t.Errorf("fix = %+v", r)
 		}
 	})
@@ -670,20 +692,37 @@ func TestFixGate(t *testing.T) {
 		{"a file the gate command names", "sh ./scripts/check.sh", "scripts/check.sh"},
 		{"the Makefile of a make gate", "make check", "Makefile"},
 	} {
-		t.Run("a session that changes "+c.name+" is refused", func(t *testing.T) {
+		t.Run("a session that changes "+c.name+" is flagged", func(t *testing.T) {
 			f := newFixture(t, c.gate)
 			seed := map[string]string{c.file: "# the gate\n", ".factory/config.toml": fmt.Sprintf("gate = %q\n", c.gate)}
 			f.origin = newOrigin(t, seed)
 			f.e.cfg.GitURL = "file://" + f.origin
 			results := f.chain()
 			results[testRepo+"/gate-1"] = map[string]any{"verdict": "fail", "failure": "error: broke"}
-			f.agent.RunFunc = writes(map[string]string{c.file: "# weakened\n", "other.txt": "x"})
-			r := f.e.run(ctx, f.claim("fix", params, results)).report()
-			if r.Outcome != "failed" || r.Retryable || !strings.Contains(r.Reason, c.file) {
-				t.Errorf("fix-gate = %+v, want final naming %s", r, c.file)
+			f.agent.RunFunc = writes(map[string]string{c.file: "# changed\n", "other.txt": "x"})
+			r := mustSucceed(t, f.e.run(ctx, f.claim("fix", params, results)))
+			if got := asMap(t, r.Result)["gate_changed"]; fmt.Sprint(got) != "["+c.file+"]" {
+				t.Errorf("gate_changed = %v, want [%s]", got, c.file)
 			}
-			if got := git(t, filepath.Join(f.origin, testRepo+".git"), "log", "-1", "--format=%s", testBranch); strings.HasPrefix(got, "Make the gate pass") {
-				t.Error("the refused change was pushed")
+			if got := git(t, filepath.Join(f.origin, testRepo+".git"), "show", testBranch+":"+c.file); got != "# changed" {
+				t.Errorf("%s on the branch = %q, want the session's change kept", c.file, got)
+			}
+			// The result survives a retry that finds the commit pushed.
+			f.e.cfg.WorkDir = t.TempDir()
+			if again := mustSucceed(t, f.e.run(ctx, f.claim("fix", params, results))); fmt.Sprint(asMap(t, again.Result)["gate_changed"]) != "["+c.file+"]" {
+				t.Errorf("retried gate_changed = %v", asMap(t, again.Result)["gate_changed"])
+			}
+
+			results[testRepo+"/fix-gate-1"] = r.Result
+			results["o/other/fix-gate-1"] = headResult{Head: "x", GateChanged: []string{"other.mk"}}
+			mustSucceed(t, f.e.run(ctx, f.claim("open_pr", map[string]any{}, results)))
+			if body := f.host.Pulls[0].Body; !strings.Contains(body, gateNoteMarker) || !strings.Contains(body, "`"+c.file+"`") || strings.Contains(body, "other.mk") {
+				t.Errorf("pull request body does not flag %s alone:\n%s", c.file, body)
+			}
+			f.agent.RunFunc = writes(map[string]string{reviewTextPath: "pass"})
+			mustSucceed(t, f.e.run(ctx, f.claim("review", map[string]any{"round": 1}, results)))
+			if prompt := f.agent.Requests[len(f.agent.Requests)-1].Prompt; !strings.Contains(prompt, c.file) || !strings.Contains(prompt, "weaken") {
+				t.Errorf("the review prompt does not name %s:\n%s", c.file, prompt)
 			}
 		})
 	}

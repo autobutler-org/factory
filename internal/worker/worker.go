@@ -20,7 +20,9 @@
 // updates the open pull request's title and body from it.
 // A gate round that fails while a fix round is left reports the
 // verdict fail, and the fix-gate step after it hands that failure to a
-// session. A session asked to make a gate pass may not change the gate.
+// session. A session asked to make a gate pass may change the files that
+// define the gate; the worker names them in the step's result, flags them in
+// the pull request body, and tells the review sessions.
 //
 // Sessions and the gate run as the worker's children, as the same user, so
 // the worker keeps them away from its credentials itself: it is

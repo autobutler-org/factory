@@ -98,7 +98,7 @@ Each repository the worker changes keeps its settings on its default branch:
 | `gate_timeout` | `30m` | How long the gate may run. |
 | `session_timeout` | `2h` | How long one agent session may run. |
 | `review_rounds` | `3` | Review rounds to plan; `0` skips review. |
-| `require_approval` | `false` | Wait for a human approval before merge. |
+| `require_approval` | `false` | Wait for a human approval before merge. Without it, the merge still waits for one when a session changed the gate ([worker.md](architecture/worker.md#prompts)). |
 | `after` | `[]` | Repositories of the same item whose chains finish first. |
 | `image` | the server's `--launcher-image` | The dev container image this repository's sandboxes run in: a full reference with registry host and a tag or digest, such as `ghcr.io/autobutler-org/quark-worker:1.4.0` or `...@sha256:<digest>`. It must be under a prefix in the server's `--launcher-allowed-images`. See [operations.md](operations.md#giving-a-repository-its-own-tools). |
 | `[automate] merge` | `"on"` | `"off"` leaves the pull request for a person. |

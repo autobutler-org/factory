@@ -70,17 +70,23 @@ When you are done, write the pull request text to %s: the title on the first lin
 }
 
 // reviewBrief is the prompt for one review session. The verdict contract is
-// the file at reviewTextPath, so no session output is parsed.
-func reviewBrief(item Item, repo string) string {
+// the file at reviewTextPath, so no session output is parsed. gateChanged
+// are the files that define the gate a session asked to make it pass
+// changed.
+func reviewBrief(item Item, repo string, gateChanged []string) string {
+	gate := ""
+	if len(gateChanged) > 0 {
+		gate = fmt.Sprintf("\nA session asked to make the repository's gate pass changed these files, which define the gate: %s. Check that the change does not weaken the gate (fewer or looser checks, skipped tests, a command that cannot fail); if it does, request changes.\n", strings.Join(gateChanged, ", "))
+	}
 	return fmt.Sprintf(`%s
 
-%s
+%s%s
 Review the change on this branch against the work item: compare it with its base and read the result. Do not edit the code, do not commit, and do not push. Write your verdict to %s and write nothing else.
 - If the change does what the work item asks, the file's only line is: pass
 - If it does not, the first line is "changes" and the rest of the file is what must be fixed.
 
 The first line must be "pass" or "changes".
-`, reviewLead, task(item, repo), reviewTextPath)
+`, reviewLead, task(item, repo), gate, reviewTextPath)
 }
 
 // fixBrief is the prompt for a session that applies review findings.
@@ -132,7 +138,7 @@ The gate command is: %s
 How it failed:
 %s
 
-Make the gate pass, with the smallest change that fixes the cause, and keep what the change was for. Do not weaken the gate: do not change %s, the files the gate command names, or the checks the gate runs to make them pass more easily. Follow the repository's own conventions. Stay inside this directory. Do not commit, push or open a pull request: the gate runs again once you are done.
+Make the gate pass, with the smallest change that fixes the cause, and keep what the change was for. Do not weaken the gate: do not loosen the checks it runs to make them pass more easily. Change %s or the files the gate command names only when the fix truly needs it; such a change is flagged on the pull request for review and a person must approve it. Follow the repository's own conventions. Stay inside this directory. Do not commit, push or open a pull request: the gate runs again once you are done.
 
 %s
 `, gateFixLead, task(item, repo), gate, strings.TrimSpace(failure), repoconfig.Path, blockedNote)

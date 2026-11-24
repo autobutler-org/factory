@@ -58,6 +58,11 @@ keys; `inputs_hash` is the SHA-256 of the item's ID, title and repositories, eac
 - A review or check on its last round (`"last": true` in its params) that reports a verdict other than `pass` fails
   the step: no fix round is left, so the item fails with the reason. A gate's last round that fails is a final
   failure from the worker, with how many runs failed and the last run's output in the reason.
+- A chain that merges without `require_approval` still gets `await_approval`, with the condition `gate changed`: it
+  runs only when a step before it in the chain succeeded with a non-empty `gate_changed` in its result (a session
+  asked to make the gate pass changed a file that defines it, [worker.md](worker.md#prompts)), and is skipped
+  otherwise. So a changed gate always waits for a person's approval. A chain with merge off gets none: a person
+  merges it.
 - Dependencies between items (`work_dependencies`) stay at the item level: an item is not planned until every item
   it is blocked by is finished.
 
@@ -91,7 +96,7 @@ flowchart TD
     review3 --> checks1[await_checks-1]
     checks1 -->|"await_checks-1 == fail"| fixc[fix-checks-1]
     fixc --> checks2["await_checks-2 (last)"]
-    checks2 --> approval["await_approval (if required)"]
+    checks2 -->|"gate changed"| approval["await_approval (if required, or the gate changed)"]
     approval --> merge
 ```
 
@@ -117,7 +122,7 @@ step again, and it must find and reuse what an earlier run left.
 | `secret_scan` | Scan the diff; a finding is `failed`, not retryable | yes | | `{}` | it only reads |
 | `open_pr` | Push and open the pull request, recording it as an output | yes | | `{"url"}` | it finds an existing pull request through the item's outputs |
 | `review` | Agent review | yes | `round`, `last` | `{"verdict": "pass" or "changes", "findings"}` | a review changes nothing |
-| `fix` | Agent session addressing the findings of the step named by `findings` (its result is in the claim's `results`), then the gate, with one more session on the gate's output if it fails. After a failed gate round (`fix-gate-K`) it is a session on the gate's `failure` only, with no gate run: the next round runs it | yes | `round`, `findings` | `{"head"}` | it continues on the branch it finds |
+| `fix` | Agent session addressing the findings of the step named by `findings` (its result is in the claim's `results`), then the gate, with one more session on the gate's output if it fails. After a failed gate round (`fix-gate-K`) it is a session on the gate's `failure` only, with no gate run: the next round runs it | yes | `round`, `findings` | `{"head", "gate_changed"}` (the files that define the gate a session changed, if any) | it continues on the branch it finds |
 | `await_checks` | Wait for the code host's checks; completed by the server's poller | no | `round`, `last` | `{"verdict": "pass" or "fail", "failed_checks", "head", "required", "checks"}` | it holds nothing |
 | `await_approval` | Wait for a human approval; completed by the server's poller | no | | `{"approved": true, "head"}` | it holds nothing |
 | `merge` | Merge the pull request or add it to the merge queue, recording the output as merged when it is | no | | `{"merged", "queued"}` | merging a merged pull request is a no-op |
@@ -134,7 +139,7 @@ gets the default.
 | Field | Default | Effect |
 | --- | --- | --- |
 | `review_rounds` | `3` | How many review rounds to unroll. `0` skips review; `1` reviews once with no fix round. |
-| `require_approval` | `false` | Adds `await_approval` before `merge`. |
+| `require_approval` | `false` | Adds `await_approval` before `merge`. Without it, `await_approval` runs only when a session changed the gate. |
 | `merge` | `true` | Adds `merge`. Off leaves the pull request for a person, and the item completes when the launcher's poll sees it merged. |
 | `after` | `[]` | Repositories of the same item whose chains must finish first. |
 | `image` | none | Recorded as `image` in the chain's `workspace` step params, where the launcher reads it to pick the chain's Job image. The planner does not check it; `internal/work` checks it against the allowlist before planning. |

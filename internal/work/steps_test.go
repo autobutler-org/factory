@@ -396,6 +396,27 @@ func TestWaitStepIsCompletedByAnEvent(t *testing.T) {
 	}
 }
 
+// TestChangedGateWaitsForApproval holds the merge of a chain that merges
+// without approval for a person once a session changed the gate.
+func TestChangedGateWaitsForApproval(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	w := register(t, svc, "w")
+	item := mustCreate(t, svc, work.NewItem{Title: "t", Repos: []string{"o/a"}})
+	runUntil(t, svc, w.ID, item.ID, "o/a/await_checks-1")
+	if _, err := svc.CompleteWait(ctx, step(t, svc, item.ID, "o/a/await_checks-1").ID, succeed(`{"verdict":"fail"}`), adapter); err != nil {
+		t.Fatal(err)
+	}
+	fix := mustClaim(t, svc, w.ID, "o/a/fix-checks-1")
+	report(t, svc, fix, w.ID, succeed(`{"head":"x","gate_changed":["Makefile"]}`))
+	if _, err := svc.CompleteWait(ctx, step(t, svc, item.ID, "o/a/await_checks-2").ID, succeed(`{"verdict":"pass"}`), adapter); err != nil {
+		t.Fatal(err)
+	}
+	if got := states(t, svc, item.ID); got["o/a/await_approval"] != plan.Ready || got["o/a/merge"] != plan.Pending {
+		t.Fatalf("after a gate change: %v, want await_approval ready and merge pending", got)
+	}
+}
+
 func TestReviewRounds(t *testing.T) {
 	svc, _ := newService(t)
 	w := register(t, svc, "w")
