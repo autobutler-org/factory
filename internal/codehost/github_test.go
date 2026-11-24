@@ -54,6 +54,9 @@ func TestOpenFindCommentRetargetMerge(t *testing.T) {
 	if err := g.RetargetPull(ctx, 1, "main"); err != nil {
 		t.Fatal(err)
 	}
+	if err := g.UpdatePull(ctx, 1, "add x, fixed", "new body"); err != nil {
+		t.Fatal(err)
+	}
 	if err := g.MergePull(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -61,8 +64,8 @@ func TestOpenFindCommentRetargetMerge(t *testing.T) {
 		t.Error("merging a merged pull request: no error")
 	}
 	pulls, comments := s.Snapshot()
-	if pulls[0].Base != "main" || !pulls[0].Merged {
-		t.Errorf("pull 1 = %+v, want retargeted to main and merged", pulls[0])
+	if pulls[0].Base != "main" || !pulls[0].Merged || pulls[0].Title != "add x, fixed" || pulls[0].Body != "new body" {
+		t.Errorf("pull 1 = %+v, want retargeted to main, its text updated, and merged", pulls[0])
 	}
 	if !slices.Equal(comments[1], []string{"see also"}) {
 		t.Errorf("comments = %v", comments)

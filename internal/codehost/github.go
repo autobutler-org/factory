@@ -297,6 +297,10 @@ func (g GitHub) RetargetPull(ctx context.Context, number int, base string) error
 	return g.do(ctx, http.MethodPatch, fmt.Sprintf("/pulls/%d", number), map[string]string{"base": base}, nil)
 }
 
+func (g GitHub) UpdatePull(ctx context.Context, number int, title, body string) error {
+	return g.do(ctx, http.MethodPatch, fmt.Sprintf("/pulls/%d", number), map[string]string{"title": title, "body": body}, nil)
+}
+
 // RevokeToken revokes the installation token it is given with DELETE
 // /installation/token, so it stops working before it expires. It sends
 // token itself, not what Bearer returns. GitHub answers 204 No Content.

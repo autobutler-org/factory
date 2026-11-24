@@ -482,6 +482,53 @@ func TestFixAppliesFindingsOnce(t *testing.T) {
 	}
 }
 
+// TestFixRewritesThePullRequestText updates the open pull request from the
+// text a fix session leaves, as when a check reads the pull request's
+// description. That is a change on its own: with no code change nothing is
+// committed, gated or pushed.
+func TestFixRewritesThePullRequestText(t *testing.T) {
+	ctx := t.Context()
+	f := newFixture(t, "test -f hello.txt")
+	results := f.chain()
+	pr := mustSucceed(t, f.e.run(ctx, f.claim("open_pr", map[string]any{}, results))).Outputs[0]
+	results[testRepo+"/await_checks-1"] = map[string]any{"verdict": "fail", "failed_checks": []string{"check/attribution"}}
+	params := map[string]any{"round": 1, "findings": testRepo + "/await_checks-1"}
+	bare := filepath.Join(f.origin, testRepo+".git")
+	before := git(t, bare, "rev-parse", testBranch)
+
+	f.agent.RunFunc = writes(map[string]string{prTextPath: "Add hello\n\nAdds hello.txt, with no footer."})
+	r := mustSucceed(t, f.e.run(ctx, f.claim("fix", params, results, pr)))
+	if prompt := f.agent.Requests[len(f.agent.Requests)-1].Prompt; !strings.Contains(prompt, prTextPath) {
+		t.Errorf("the fix prompt does not say where the pull request text goes:\n%s", prompt)
+	}
+	if head := git(t, bare, "rev-parse", testBranch); head != before || asMap(t, r.Result)["head"] != before {
+		t.Errorf("head = %s, result %v; want %s: a text-only fix commits nothing", head, r.Result, before)
+	}
+	wantBody := codehost.PullBody(testRepo, "Adds hello.txt, with no footer.", "https://jira.test/browse/F-1", nil)
+	if p := f.host.Pulls[0]; p.Title != "Add hello" || p.Body != wantBody {
+		t.Errorf("pull request = %q %q, want %q %q", p.Title, p.Body, "Add hello", wantBody)
+	}
+
+	t.Run("with a code change, both are applied", func(t *testing.T) {
+		results[testRepo+"/review-1"] = reviewResult{Verdict: "changes", Findings: "add fixed.txt and say so"}
+		f.agent.RunFunc = writes(map[string]string{"fixed.txt": "ok", prTextPath: "Add hello and fixed\n\nAlso adds fixed.txt."})
+		mustSucceed(t, f.e.run(ctx, f.claim("fix", map[string]any{"round": 1, "findings": testRepo + "/review-1"}, results, pr)))
+		if files := git(t, bare, "ls-tree", "-r", "--name-only", testBranch); !strings.Contains(files, "fixed.txt") || strings.Contains(files, ".factory/pr.md") {
+			t.Errorf("the branch holds:\n%s", files)
+		}
+		if p := f.host.Pulls[0]; p.Title != "Add hello and fixed" {
+			t.Errorf("title = %q", p.Title)
+		}
+	})
+	t.Run("no text and no change is a retryable failure", func(t *testing.T) {
+		f.agent.RunFunc = func(context.Context, harness.Request) error { return nil }
+		r := f.e.run(ctx, f.claim("fix", map[string]any{"round": 2, "findings": testRepo + "/await_checks-1"}, results, pr)).report()
+		if r.Outcome != "failed" || !r.Retryable || !strings.Contains(r.Reason, "no changes") {
+			t.Errorf("fix = %+v", r)
+		}
+	})
+}
+
 // TestFixRepairsItsGate hands a fix session whose gate fails that gate's
 // whole output, once, and pushes what makes the gate pass.
 func TestFixRepairsItsGate(t *testing.T) {

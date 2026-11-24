@@ -26,8 +26,8 @@ func TestFakeMergePullMarksItMerged(t *testing.T) {
 	}
 }
 
-// TestFakeRetargetAndComment moves a stacked pull request onto main and
-// records a comment on it.
+// TestFakeRetargetAndComment moves a stacked pull request onto main,
+// rewrites its text, and records a comment on it.
 func TestFakeRetargetAndComment(t *testing.T) {
 	f := &Fake{Repo: "o/a"}
 	if _, err := f.OpenPull(t.Context(), "below", "", "aaaaaaaa_below", "main"); err != nil {
@@ -48,6 +48,15 @@ func TestFakeRetargetAndComment(t *testing.T) {
 	}
 	if err := f.RetargetPull(t.Context(), 9, "main"); err == nil {
 		t.Error("RetargetPull of a missing pull request: no error")
+	}
+	if err := f.UpdatePull(t.Context(), above.Number, "above, fixed", "new body"); err != nil {
+		t.Fatal(err)
+	}
+	if p, _, _ := f.FindPull(t.Context(), "bbbbbbbb_above", "open"); p.Title != "above, fixed" || p.Body != "new body" {
+		t.Errorf("text after update = %q %q", p.Title, p.Body)
+	}
+	if err := f.UpdatePull(t.Context(), 9, "t", "b"); err == nil {
+		t.Error("UpdatePull of a missing pull request: no error")
 	}
 	if err := f.Comment(t.Context(), 2, "hello"); err != nil {
 		t.Fatal(err)

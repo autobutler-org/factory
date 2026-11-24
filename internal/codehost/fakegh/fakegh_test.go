@@ -116,8 +116,11 @@ func TestContract(t *testing.T) {
 	if code, got := call(t, s, http.MethodPatch, "/pulls/1", `{"base":"release"}`); code != http.StatusOK || hasKeys(t, "pull", got, "base")["base"].(map[string]any)["ref"] != "release" {
 		t.Errorf("PATCH pull base = %d %v", code, got)
 	}
+	if code, got := call(t, s, http.MethodPatch, "/pulls/1", `{"title":"t2","body":"b2"}`); code != http.StatusOK || hasKeys(t, "pull", got, "title")["title"] != "t2" || hasKeys(t, "pull", got, "body")["body"] != "b2" || hasKeys(t, "pull", got, "base")["base"].(map[string]any)["ref"] != "release" {
+		t.Errorf("PATCH pull title and body = %d %v", code, got)
+	}
 	if code, _ := call(t, s, http.MethodPatch, "/pulls/1", `{}`); code != http.StatusUnprocessableEntity {
-		t.Errorf("PATCH without base = %d, want 422", code)
+		t.Errorf("PATCH with nothing to change = %d, want 422", code)
 	}
 
 	s.SetChecks([]CheckRun{{Name: "a", Status: "completed", Conclusion: "success"}, {Name: "b", Status: "queued"}})

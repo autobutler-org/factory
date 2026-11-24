@@ -72,7 +72,7 @@ func (f *Fake) FindPull(_ context.Context, branch, state string) (Pull, bool, er
 	return Pull{}, false, nil
 }
 
-func (f *Fake) OpenPull(_ context.Context, _, _, head, base string) (Pull, error) {
+func (f *Fake) OpenPull(_ context.Context, title, body, head, base string) (Pull, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	repo := f.Repo
@@ -80,7 +80,7 @@ func (f *Fake) OpenPull(_ context.Context, _, _, head, base string) (Pull, error
 		repo = "o/r"
 	}
 	n := len(f.Pulls) + 1
-	p := Pull{Number: n, HTMLURL: fmt.Sprintf("https://github.test/%s/pull/%d", repo, n), State: "open"}
+	p := Pull{Number: n, Title: title, Body: body, HTMLURL: fmt.Sprintf("https://github.test/%s/pull/%d", repo, n), State: "open"}
 	p.Head.Ref, p.Base.Ref = head, base
 	f.Pulls = append(f.Pulls, p)
 	return p, nil
@@ -141,6 +141,16 @@ func (f *Fake) RetargetPull(_ context.Context, number int, base string) error {
 		return fmt.Errorf("no pull request %d", number)
 	}
 	f.Pulls[number-1].Base.Ref = base
+	return nil
+}
+
+func (f *Fake) UpdatePull(_ context.Context, number int, title, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if number < 1 || number > len(f.Pulls) {
+		return fmt.Errorf("no pull request %d", number)
+	}
+	f.Pulls[number-1].Title, f.Pulls[number-1].Body = title, body
 	return nil
 }
 

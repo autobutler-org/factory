@@ -192,7 +192,7 @@ func (s *stepRun) implement(ctx context.Context) outcome {
 			dropNotes(t.dir)
 			return outcome{blocked: question}
 		}
-		title, body := prText(t.dir, s.claim.Item)
+		title, body, _ := prText(t.dir, s.claim.Item)
 		dropNotes(t.dir)
 		changed, err := t.commit(ctx, strings.TrimSpace(title+"\n\n"+body))
 		if err != nil {
@@ -284,6 +284,31 @@ func (s *stepRun) pull() (Output, bool) {
 	return Output{}, false
 }
 
+// pullBody is the description of this repository's pull request for the
+// item, with summary first.
+func (s *stepRun) pullBody(summary string) string {
+	var siblings []string
+	for _, o := range s.claim.Outputs {
+		if o.Kind == "pull_request" && !strings.EqualFold(o.Repo, s.repo) {
+			siblings = append(siblings, o.URL)
+		}
+	}
+	return codehost.PullBody(s.repo, summary, s.claim.Item.ExternalURL, siblings)
+}
+
+// updatePull rewrites the title and body of the recorded pull request.
+func (s *stepRun) updatePull(ctx context.Context, title, body string) error {
+	o, ok := s.pull()
+	if !ok {
+		return fmt.Errorf("no pull request is recorded for %s, so its text cannot be updated", s.repo)
+	}
+	n, err := codehost.PullNumber(o.URL)
+	if err != nil {
+		return err
+	}
+	return s.e.cfg.Host(s.repo, s.tokens).UpdatePull(ctx, n, title, s.pullBody(body))
+}
+
 // urlResult is open_pr's result.
 type urlResult struct {
 	URL string `json:"url"`
@@ -324,13 +349,7 @@ func (s *stepRun) openPR(ctx context.Context) outcome {
 		if title == "" {
 			title = s.claim.Item.Title
 		}
-		var siblings []string
-		for _, o := range s.claim.Outputs {
-			if o.Kind == "pull_request" && !strings.EqualFold(o.Repo, s.repo) {
-				siblings = append(siblings, o.URL)
-			}
-		}
-		pull, err = host.OpenPull(ctx, title, codehost.PullBody(s.repo, body, s.claim.Item.ExternalURL, siblings), t.branch, t.base)
+		pull, err = host.OpenPull(ctx, title, s.pullBody(body), t.branch, t.base)
 		if err != nil {
 			return retry(err)
 		}
@@ -377,7 +396,10 @@ func (s *stepRun) review(ctx context.Context) outcome {
 }
 
 // fix runs a session on the findings of the review its params name, gates
-// the change, and pushes it, which updates the open pull request. A commit
+// the change, and pushes it, which updates the open pull request. When the
+// session rewrites the pull request text, the open pull request's title and
+// body are updated from it; that alone is a change, with nothing to commit,
+// gate or push. A commit
 // for this round already on the branch means an earlier attempt finished the
 // session, so it is gated and pushed again. When the gate fails, a second
 // session is handed the gate's output to make it pass, and the gate runs
@@ -413,13 +435,27 @@ func (s *stepRun) fix(ctx context.Context) outcome {
 			dropNotes(t.dir)
 			return outcome{blocked: question}
 		}
+		title, body, rewrote := prText(t.dir, s.claim.Item)
 		dropNotes(t.dir)
+		if rewrote {
+			if err := s.updatePull(ctx, title, body); err != nil {
+				return retry(err)
+			}
+		}
 		clean, err := t.clean(ctx)
 		if err != nil {
 			return retry(err)
 		}
-		if clean {
+		if clean && !rewrote {
 			return retry(errors.New("the session made no changes for the review findings"))
+		}
+		if clean {
+			head, err := t.head(ctx)
+			if err != nil {
+				return retry(err)
+			}
+			s.e.stage(ctx, s.claim, stageSessionFinished)
+			return succeeded(headResult{Head: head})
 		}
 		if _, err := t.commit(ctx, subject); err != nil {
 			return retry(err)

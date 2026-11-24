@@ -41,6 +41,7 @@ server for tests.
 | `MergePull(number)` | Merges with a merge commit. |
 | `Protection(branch)` | Required approving reviews; an unprotected branch, or a token without Administration read, is no protection. |
 | `RetargetPull(number, base)` | Changes the base, as when the pull request below a stacked one merges. |
+| `UpdatePull(number, title, body)` | Replaces the title and body, as when a `fix` session rewrites the pull request text a check reads. |
 | `ReadFile(branch, path)` | One file at the commit the branch points at, with that commit's SHA, or `ErrFileNotFound`. The server reads `.factory/config.toml` with it when it plans an item. |
 | `PullStatus(number)` | What the server's poller needs about a pull request, in one GraphQL request: open, closed or merged; the head commit and its date; whether it is approved; the base branch's required check names; and the head commit's checks, each pending, passed or failed. See [below](#pull-request-status). |
 

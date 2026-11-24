@@ -1,6 +1,6 @@
 // Package fakegh is a stateful fake of the GitHub REST endpoints a worker
-// calls for one repository: the repository, pulls (list, create, retarget,
-// merge), pull request comments, check runs and their Actions job logs,
+// calls for one repository: the repository, pulls (list, create, edit
+// base, title and body, merge), pull request comments, check runs and their Actions job logs,
 // branch protection, a branch's head commit and file contents, token revocation, and one GraphQL answer for the
 // merge queue and a pull request's status (state, review decision, and the check runs on HeadSHA). List endpoints honor per_page and page. Merge can be told to
 // fail the way GitHub does. Accept adds tokens that expire, and an expired
@@ -199,7 +199,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && path == "/pulls":
 		s.createPull(w, r)
 	case r.Method == http.MethodPatch && len(parts) == 2 && parts[0] == "pulls":
-		s.retarget(w, r, parts[1])
+		s.editPull(w, r, parts[1])
 	case r.Method == http.MethodPut && len(parts) == 3 && parts[0] == "pulls" && parts[2] == "merge":
 		s.merge(w, r, parts[1])
 	case r.Method == http.MethodPost && len(parts) == 3 && parts[0] == "issues" && parts[2] == "comments":
@@ -349,9 +349,9 @@ func (s *Server) pull(number string) *Pull {
 	return &s.pulls[n-1]
 }
 
-// retarget handles PATCH /pulls/{n} with a new base, the only edit a worker
-// makes.
-func (s *Server) retarget(w http.ResponseWriter, r *http.Request, number string) {
+// editPull handles PATCH /pulls/{n} with a new base, title or body, the
+// edits a worker makes.
+func (s *Server) editPull(w http.ResponseWriter, r *http.Request, number string) {
 	const docs = "https://docs.github.com/rest/pulls/pulls#update-a-pull-request"
 	p := s.pull(number)
 	if p == nil {
@@ -359,13 +359,23 @@ func (s *Server) retarget(w http.ResponseWriter, r *http.Request, number string)
 		return
 	}
 	var body struct {
-		Base string `json:"base"`
+		Base  string  `json:"base"`
+		Title string  `json:"title"`
+		Body  *string `json:"body"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Base == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || (body.Base == "" && body.Title == "" && body.Body == nil) {
 		writeError(w, http.StatusUnprocessableEntity, "Validation Failed", docs)
 		return
 	}
-	p.Base = body.Base
+	if body.Base != "" {
+		p.Base = body.Base
+	}
+	if body.Title != "" {
+		p.Title = body.Title
+	}
+	if body.Body != nil {
+		p.Body = *body.Body
+	}
 	writeJSON(w, http.StatusOK, p.reply())
 }
 
