@@ -30,7 +30,7 @@ The type is one of `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `
 `revert`. The `pr-title` check fails any other title. Pull requests are squash merged, so the title becomes
 the commit subject on `main`.
 
-Do not put AI attribution in a title, description, or commit message. The `check` workflow rejects it.
+Do not put AI attribution in a title, description, or commit message. The `pr-title` workflow rejects it.
 
 ## Found a bug or have an idea?
 
