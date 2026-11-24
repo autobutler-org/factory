@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,6 +68,10 @@ type tree struct {
 	// process in the sandbox before the token leaves the worker.
 	gitBin string
 	sweep  func(context.Context) error
+	// wait retries a remote command that never reached the remote; log
+	// says so.
+	wait netWait
+	log  *slog.Logger
 }
 
 // treeSpec says where a sandbox's checkout lives and what it checks out.
@@ -75,6 +80,8 @@ type treeSpec struct {
 	token                   func(context.Context) (codehost.Token, error)
 	gitBin                  string
 	sweep                   func(context.Context) error
+	wait                    netWait
+	log                     *slog.Logger
 }
 
 // openTree returns the sandbox's checkout on spec.branch, creating what is
@@ -87,6 +94,7 @@ func openTree(ctx context.Context, s treeSpec) (*tree, error) {
 	t := &tree{
 		root: s.root, repoDir: filepath.Join(s.root, "repo.git"), dir: filepath.Join(s.root, "tree"),
 		url: s.url, base: s.base, branch: s.branch, token: s.token, gitBin: s.gitBin, sweep: s.sweep,
+		wait: s.wait, log: s.log,
 	}
 	if err := os.MkdirAll(t.root, 0o750); err != nil {
 		return nil, fmt.Errorf("create the sandbox directory: %w; check that --work-dir is writable", err)
@@ -135,7 +143,10 @@ func defaultBranch(ctx context.Context, s treeSpec) (string, error) {
 		return "", fmt.Errorf("create a scratch repository: %w", err)
 	}
 	defer os.RemoveAll(scratch)
-	t := &tree{root: scratch, repoDir: scratch, url: s.url, token: s.token, gitBin: s.gitBin, sweep: s.sweep}
+	t := &tree{
+		root: scratch, repoDir: scratch, url: s.url, token: s.token, gitBin: s.gitBin, sweep: s.sweep,
+		wait: s.wait, log: s.log,
+	}
 	if _, err := t.git(ctx, scratch, "init", "-q", "--bare", scratch); err != nil {
 		return "", err
 	}
@@ -203,7 +214,15 @@ func (t *tree) remote(ctx context.Context, args ...string) (string, error) {
 			env = append(env, name+"="+v)
 		}
 	}
-	return t.run(ctx, t.repoDir, env, args)
+	// A fresh pod can have no DNS for its first seconds (#76): a command
+	// that never reached the remote is run again for a while.
+	var out string
+	err = t.wait.do(ctx, t.log, "git "+args[0], gitUnreachable, func() error {
+		var err error
+		out, err = t.run(ctx, t.repoDir, env, args)
+		return err
+	})
+	return out, err
 }
 
 // run runs the git binary in dir with env and the settings every git

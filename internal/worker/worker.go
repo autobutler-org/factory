@@ -3,6 +3,11 @@
 // runs the code for the step's kind, and reports the result, until the
 // server has nothing more to hand it. See docs/architecture/worker.md.
 //
+// A fresh sandbox can have no network for its first seconds, so a call that
+// never reached its host (registration, and git against the code host) is
+// retried with backoff for a bounded time, then fails with
+// ErrNetworkNotReady; a step that fails that way is retryable.
+//
 // Each sandbox step kind (workspace, implement, gate, secret_scan, open_pr,
 // review, fix) and merge is ported from schmeide's runner, re-pointed at the
 // step protocol. Every kind is safe to run twice and rebuilds what it needs
@@ -87,6 +92,10 @@ type Config struct {
 	// that carries a code host token. Never set it on a shared machine:
 	// that kill reaches every process of the user.
 	Contained bool
+	// netWait is how long a call that cannot reach its host is retried
+	// while the sandbox's network comes up; zero is the default. Tests
+	// shorten it.
+	netWait netWait
 }
 
 // current is the step being worked on, shared with the heartbeat.
@@ -157,7 +166,15 @@ func Run(ctx context.Context, cfg Config) error {
 	for i, h := range cfg.Harnesses {
 		names[i] = h.Name()
 	}
-	id, credential, err := cfg.Client.Register(ctx, cfg.Name, cfg.Version, names)
+	// Registering is the worker's first network call. A fresh pod can have
+	// no DNS for its first seconds, so a call that got no reply is retried
+	// for a while (#76).
+	var id, credential string
+	err = cfg.netWait.do(ctx, cfg.Log, "registering with the factory server", unreachable, func() error {
+		var err error
+		id, credential, err = cfg.Client.Register(ctx, cfg.Name, cfg.Version, names)
+		return err
+	})
 	if err != nil {
 		return err
 	}
