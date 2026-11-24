@@ -51,8 +51,13 @@ keys; `inputs_hash` is the SHA-256 of the item's ID, title and repositories, eac
 - Review rounds are unrolled up to the limit: `review-1`, `fix-1`, `review-2`, ... `review-N`. `fix-K` and
   `review-K+1` carry the condition `review-K == changes`, so when a review passes, the rounds after it end `skipped`.
 - Checks get the same treatment with one fix round: `await_checks-1`, `fix-checks-1`, `await_checks-2`.
+- The gate after `implement` gets two fix rounds: `gate-1`, `fix-gate-1`, `gate-2`, `fix-gate-2`, `gate-3`. A gate
+  round that fails reports the verdict `fail`, so `fix-gate-K` runs a session on its failure and `gate-K+1` runs the
+  gate again; a passing round skips the rest. The number is fixed, like the check rounds; it becomes a
+  `.factory/config.toml` key when a repository needs another.
 - A review or check on its last round (`"last": true` in its params) that reports a verdict other than `pass` fails
-  the step: no fix round is left, so the item fails with the reason.
+  the step: no fix round is left, so the item fails with the reason. A gate's last round that fails is a final
+  failure from the worker, with how many runs failed and the last run's output in the reason.
 - Dependencies between items (`work_dependencies`) stay at the item level: an item is not planned until every item
   it is blocked by is finished.
 
@@ -73,7 +78,12 @@ The chain for one repository with the default config (three review rounds, merge
 
 ```mermaid
 flowchart TD
-    workspace --> implement --> gate --> secret_scan --> open_pr --> review1[review-1]
+    workspace --> implement --> gate1[gate-1]
+    gate1 -->|"gate-1 == fail"| fixg1[fix-gate-1]
+    fixg1 --> gate2[gate-2]
+    gate2 -->|"gate-2 == fail"| fixg2[fix-gate-2]
+    fixg2 --> gate3["gate-3 (last)"]
+    gate3 --> secret_scan --> open_pr --> review1[review-1]
     review1 -->|"review-1 == changes"| fix1[fix-1]
     fix1 --> review2[review-2]
     review2 -->|"review-2 == changes"| fix2[fix-2]
@@ -85,13 +95,13 @@ flowchart TD
     approval --> merge
 ```
 
-`review-2` carries the same condition as `fix-1`, and `await_checks-2` the same as `fix-checks-1`, so a passing
-review or green checks skip the rest of the rounds. Two independent repositories are two such chains side by side.
+`review-2` carries the same condition as `fix-1`, `gate-2` the same as `fix-gate-1`, and `await_checks-2` the same
+as `fix-checks-1`, so a passing gate, a passing review or green checks skip the rest of the rounds. Two independent repositories are two such chains side by side.
 With `after`, the later chain's `workspace` depends on the earlier chain's `merge` (or its last step when merge is
 off). The golden files in `internal/plan/testdata` are the exact graphs for one repository, two independent
 repositories, and two ordered repositories; regenerate them with `make generate/golden` after an intended change.
 
-Step keys are `<repo>/<kind>` or `<repo>/<kind>-<round>`, for example `autobutler-org/quark/gate` and
+Step keys are `<repo>/<kind>` or `<repo>/<kind>-<round>`, for example `autobutler-org/quark/gate-1` and
 `autobutler-org/quark/review-2`. The sandbox key is `<item id>/<repo>`: one working tree per item and repository.
 
 ### Step kinds
@@ -103,11 +113,11 @@ step again, and it must find and reuse what an earlier run left.
 | --- | --- | --- | --- | --- | --- |
 | `workspace` | Clone and create the worktree and branch, or re-create them from the pushed branch | yes | `branch`: `plan.BranchName(id, title)`, `<short-id>_<slug>` | `{"branch", "base", "head"}` | it reuses a clone and an existing branch |
 | `implement` | Agent session that writes the change | yes | | `{"head"}` | it continues on the branch it finds |
-| `gate` | The repository's check command; failing is `failed`, not retryable | yes | | `{}` | it only reads |
+| `gate` | The repository's check command; a failure is the verdict `fail` while a fix round is left, and `failed`, not retryable, on the last round | yes | `round`, `last` | `{"verdict": "pass" or "fail", "failure"}` | it only reads |
 | `secret_scan` | Scan the diff; a finding is `failed`, not retryable | yes | | `{}` | it only reads |
 | `open_pr` | Push and open the pull request, recording it as an output | yes | | `{"url"}` | it finds an existing pull request through the item's outputs |
 | `review` | Agent review | yes | `round`, `last` | `{"verdict": "pass" or "changes", "findings"}` | a review changes nothing |
-| `fix` | Agent session addressing the findings of the step named by `findings` (its result is in the claim's `results`), then the gate, with one more session on the gate's output if it fails | yes | `round`, `findings` | `{"head"}` | it continues on the branch it finds |
+| `fix` | Agent session addressing the findings of the step named by `findings` (its result is in the claim's `results`), then the gate, with one more session on the gate's output if it fails. After a failed gate round (`fix-gate-K`) it is a session on the gate's `failure` only, with no gate run: the next round runs it | yes | `round`, `findings` | `{"head"}` | it continues on the branch it finds |
 | `await_checks` | Wait for the code host's checks; completed by the server's poller | no | `round`, `last` | `{"verdict": "pass" or "fail", "failed_checks", "head", "required", "checks"}` | it holds nothing |
 | `await_approval` | Wait for a human approval; completed by the server's poller | no | | `{"approved": true, "head"}` | it holds nothing |
 | `merge` | Merge the pull request or add it to the merge queue, recording the output as merged when it is | no | | `{"merged", "queued"}` | merging a merged pull request is a no-op |

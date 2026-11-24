@@ -235,7 +235,7 @@ func TestReviewRoundsAreUnrolled(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys := strings.Join(keysOf(g), " ")
-	for _, want := range []string{"o/a/review-1 o/a/fix-1 o/a/review-2 o/a/fix-2 o/a/review-3 ", "o/a/await_checks-1 o/a/fix-checks-1 o/a/await_checks-2 o/a/merge"} {
+	for _, want := range []string{"o/a/implement o/a/gate-1 o/a/fix-gate-1 o/a/gate-2 o/a/fix-gate-2 o/a/gate-3 o/a/secret_scan", "o/a/review-1 o/a/fix-1 o/a/review-2 o/a/fix-2 o/a/review-3 ", "o/a/await_checks-1 o/a/fix-checks-1 o/a/await_checks-2 o/a/merge"} {
 		if !strings.Contains(keys, want) {
 			t.Errorf("keys %q lack %q", keys, want)
 		}
@@ -274,8 +274,16 @@ func TestNext(t *testing.T) {
 	}
 	done := plan.Status{State: plan.Succeeded}
 	upToReview := map[string]plan.Status{}
-	for _, k := range []string{"workspace", "implement", "gate", "secret_scan", "open_pr"} {
+	for _, k := range []string{"workspace", "implement", "gate-1", "secret_scan", "open_pr"} {
 		upToReview["o/a/"+k] = done
+	}
+	for _, k := range []string{"fix-gate-1", "gate-2", "fix-gate-2", "gate-3"} {
+		upToReview["o/a/"+k] = plan.Status{State: plan.Skipped}
+	}
+
+	gateFailed := map[string]plan.Status{"o/a/workspace": done, "o/a/implement": done, "o/a/gate-1": {State: plan.Succeeded, Verdict: "fail"}}
+	if got := plan.Next(g, status(g, gateFailed)); fmt.Sprint(got) != "map[o/a/fix-gate-1:ready o/b/workspace:ready]" {
+		t.Errorf("gate failed: %v", got)
 	}
 
 	passed := with(upToReview, "o/a/review-1", plan.Status{State: plan.Succeeded, Verdict: "pass"})

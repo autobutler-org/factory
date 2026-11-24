@@ -13,6 +13,9 @@
 // like failures; a fix whose gate fails hands that output to one more
 // session. A fix session may rewrite the pull request text, and the worker
 // updates the open pull request's title and body from it.
+// A gate round that fails while a fix round is left reports the
+// verdict fail, and the fix-gate step after it hands that failure to a
+// session. A session asked to make a gate pass may not change the gate.
 //
 // Sessions and the gate run as the worker's children, as the same user, so
 // the worker keeps them away from its credentials itself: it is
@@ -327,6 +330,9 @@ func (e *executor) run(ctx context.Context, claim Claim) outcome {
 	case "review":
 		return s.review(ctx)
 	case "fix":
+		if failure := s.gateFailure(); failure != "" {
+			return s.fixGate(ctx, failure)
+		}
 		return s.fix(ctx)
 	case "merge":
 		return s.merge(ctx)

@@ -297,7 +297,7 @@ func TestKilledWorkerReturnsOnlyItsStep(t *testing.T) {
 		t.Fatalf("reap: %+v %v", r, err)
 	}
 	got := states(t, svc, item.ID)
-	if got["o/a/workspace"] != plan.Succeeded || got["o/a/implement"] != plan.Ready || got["o/a/gate"] != plan.Pending {
+	if got["o/a/workspace"] != plan.Succeeded || got["o/a/implement"] != plan.Ready || got["o/a/gate-1"] != plan.Pending {
 		t.Fatalf("after the kill: %v", got)
 	}
 	if s := step(t, svc, item.ID, "o/a/implement"); s.Attempts != 0 || s.ClaimedBy != nil {
@@ -488,7 +488,7 @@ func TestDerivedItemState(t *testing.T) {
 	if got, _ := svc.Get(ctx, stuck.ID); got.State != work.Blocked || got.StateReason != "which API version?" {
 		t.Fatalf("blocked: %s %q", got.State, got.StateReason)
 	}
-	if got := states(t, svc, stuck.ID); got["o/d/implement"] != plan.Failed || got["o/d/gate"] != plan.Canceled {
+	if got := states(t, svc, stuck.ID); got["o/d/implement"] != plan.Failed || got["o/d/gate-1"] != plan.Canceled {
 		t.Fatalf("steps after blocked: %v", got)
 	}
 

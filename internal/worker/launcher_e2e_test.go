@@ -219,7 +219,7 @@ func TestE2ELauncherStartsTheWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, s := range g.Steps {
-		if strings.HasPrefix(s.Key, repo+"/review-") && s.Key != repo+"/review-1" || strings.HasPrefix(s.Key, repo+"/fix-") && !strings.Contains(s.Key, "checks") {
+		if strings.HasPrefix(s.Key, repo+"/review-") && s.Key != repo+"/review-1" || strings.HasPrefix(s.Key, repo+"/fix-") && !strings.Contains(s.Key, "checks") && !strings.Contains(s.Key, "gate") {
 			t.Errorf("review_rounds = 1, but the graph has %s", s.Key)
 		}
 	}

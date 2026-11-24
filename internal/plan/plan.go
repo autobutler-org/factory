@@ -58,6 +58,10 @@ const (
 // for failing checks, as schmeide had.
 const checkRounds = 2
 
+// gateRounds is how many times the chain runs the gate after implement: two
+// fix rounds for a failing gate.
+const gateRounds = 3
+
 // ErrInvalidGraph is returned for inputs that cannot be planned and for a
 // graph that breaks the rules: duplicate keys, missing dependencies, cycles,
 // unknown kinds, or conditions on steps that are not ancestors.
@@ -107,8 +111,8 @@ type RepoConfig struct {
 func DefaultRepoConfig() RepoConfig { return RepoConfig{ReviewRounds: 3, Merge: true} }
 
 // Template is the process: the step kinds of one repository's chain, in
-// order. Review and await_checks expand into rounds with fix steps between
-// them; review, await_approval and merge follow the repository's config.
+// order. Gate, review and await_checks expand into rounds with fix steps
+// between them; review, await_approval and merge follow the repository's config.
 type Template struct {
 	Name  string   `json:"name"`
 	Chain []string `json:"chain"`
@@ -182,6 +186,8 @@ func Plan(item Item, configs map[string]RepoConfig, t Template) (Graph, error) {
 			switch {
 			case kind == Review && cfg.ReviewRounds > 0:
 				c.rounds(Review, cfg.ReviewRounds, "fix", VerdictChanges)
+			case kind == Gate:
+				c.rounds(Gate, gateRounds, "fix-gate", VerdictFail)
 			case kind == AwaitChecks:
 				c.rounds(AwaitChecks, checkRounds, "fix-checks", VerdictFail)
 			case kind == Review, kind == AwaitApproval && !cfg.RequireApproval, kind == Merge && !cfg.Merge:

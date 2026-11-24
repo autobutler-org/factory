@@ -24,14 +24,72 @@
       ]
     },
     {
-      "key": "o/lib/gate",
+      "key": "o/lib/gate-1",
       "kind": "gate",
       "params": {
-        "repo": "o/lib"
+        "last": false,
+        "repo": "o/lib",
+        "round": 1
       },
       "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
       "depends_on": [
         "o/lib/implement"
+      ]
+    },
+    {
+      "key": "o/lib/fix-gate-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/lib/gate-1",
+        "repo": "o/lib",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "condition": "o/lib/gate-1 == fail",
+      "depends_on": [
+        "o/lib/gate-1"
+      ]
+    },
+    {
+      "key": "o/lib/gate-2",
+      "kind": "gate",
+      "params": {
+        "last": false,
+        "repo": "o/lib",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "condition": "o/lib/gate-1 == fail",
+      "depends_on": [
+        "o/lib/fix-gate-1"
+      ]
+    },
+    {
+      "key": "o/lib/fix-gate-2",
+      "kind": "fix",
+      "params": {
+        "findings": "o/lib/gate-2",
+        "repo": "o/lib",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "condition": "o/lib/gate-2 == fail",
+      "depends_on": [
+        "o/lib/gate-2"
+      ]
+    },
+    {
+      "key": "o/lib/gate-3",
+      "kind": "gate",
+      "params": {
+        "last": true,
+        "repo": "o/lib",
+        "round": 3
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
+      "condition": "o/lib/gate-2 == fail",
+      "depends_on": [
+        "o/lib/fix-gate-2"
       ]
     },
     {
@@ -42,7 +100,7 @@
       },
       "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/lib",
       "depends_on": [
-        "o/lib/gate"
+        "o/lib/gate-3"
       ]
     },
     {
@@ -201,14 +259,72 @@
       ]
     },
     {
-      "key": "o/app/gate",
+      "key": "o/app/gate-1",
       "kind": "gate",
       "params": {
-        "repo": "o/app"
+        "last": false,
+        "repo": "o/app",
+        "round": 1
       },
       "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
       "depends_on": [
         "o/app/implement"
+      ]
+    },
+    {
+      "key": "o/app/fix-gate-1",
+      "kind": "fix",
+      "params": {
+        "findings": "o/app/gate-1",
+        "repo": "o/app",
+        "round": 1
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "condition": "o/app/gate-1 == fail",
+      "depends_on": [
+        "o/app/gate-1"
+      ]
+    },
+    {
+      "key": "o/app/gate-2",
+      "kind": "gate",
+      "params": {
+        "last": false,
+        "repo": "o/app",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "condition": "o/app/gate-1 == fail",
+      "depends_on": [
+        "o/app/fix-gate-1"
+      ]
+    },
+    {
+      "key": "o/app/fix-gate-2",
+      "kind": "fix",
+      "params": {
+        "findings": "o/app/gate-2",
+        "repo": "o/app",
+        "round": 2
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "condition": "o/app/gate-2 == fail",
+      "depends_on": [
+        "o/app/gate-2"
+      ]
+    },
+    {
+      "key": "o/app/gate-3",
+      "kind": "gate",
+      "params": {
+        "last": true,
+        "repo": "o/app",
+        "round": 3
+      },
+      "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
+      "condition": "o/app/gate-2 == fail",
+      "depends_on": [
+        "o/app/fix-gate-2"
       ]
     },
     {
@@ -219,7 +335,7 @@
       },
       "sandbox_key": "b2e9c0de-0000-4000-8000-000000000001/o/app",
       "depends_on": [
-        "o/app/gate"
+        "o/app/gate-3"
       ]
     },
     {
