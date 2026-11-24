@@ -40,8 +40,8 @@ docs/               api.md, cli.md (CLI conventions and commands), config.md, op
 build/              build output (./build/factory); not source
 .claude/skills/     interface design skills vendored from schmeide/template (MIT; LICENSE and UPSTREAM_COMMIT inside)
 .github/workflows/  ci.yml (build, race tests, test-db and e2e on Postgres, web), check.yml (make check/go,
-                    govulncheck, attribution, chart), images.yml (builds both images; pushes them on v* tags, then
-                    calls deploy.yml), deploy.yml (upgrades our cluster to a tag), pr-title.yml, auto-assign-author.yml;
+                    govulncheck, chart), images.yml (builds both images; pushes them on v* tags, then
+                    calls deploy.yml), deploy.yml (upgrades our cluster to a tag), pr-title.yml (title and attribution; re-runs on edits), auto-assign-author.yml;
                     path-filters.yml says which paths each job reads, so Go-only changes skip the web job and the reverse
 ```
 
@@ -130,7 +130,7 @@ Write plainly, in American spelling.
 - **Branch:** `<issue number>_short-description`, for example `12_claim-lease`.
 - **Commits:** signed off (`git commit -s`).
 - **No AI attribution.** No AI co-author trailer, no generated-by footer, and no agent session link in a commit,
-  pull request, comment, or issue. `check.yml` rejects a pull request that carries one.
+  pull request, comment, or issue. `pr-title.yml` rejects a pull request that carries one.
 - **How was this tested?** lists the commands actually run.
 
 ## Scope

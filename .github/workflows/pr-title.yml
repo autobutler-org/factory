@@ -28,3 +28,19 @@ jobs:
             exit 1
           fi
           echo "Title is a conventional commit: ${TITLE}"
+
+  # Here, not in check.yml, because this workflow also runs when a pull request
+  # is edited: a corrected title or description re-runs the check that read it.
+  attribution:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: make check/attribution PR="$PR"

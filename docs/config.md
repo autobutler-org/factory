@@ -119,3 +119,10 @@ installation token for that repository, and plans with `review_rounds`, `require
 The `planned` event records, per repository, the default branch, the commit the file was read at, and the chosen
 image. The config is part of the graph's `inputs_hash`. A change to the file after an item was planned does not
 reach that item until it is replanned (`POST /api/v1/work/{id}/replan`), which reads it again.
+
+### Checks that read the pull request text
+
+A fix session can correct a pull request's title or description without pushing a commit. A check that reads that
+text (title format, attribution) passes afterwards only if its workflow runs again when the pull request is edited,
+so give such a workflow `types: [opened, edited, reopened, synchronize]` on `pull_request`, as this repository's
+`pr-title.yml` does. A check that runs only on a push keeps its old failure, and the item fails after its fix rounds.
