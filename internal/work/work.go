@@ -136,9 +136,9 @@ func AllowedTargets(from string) []string {
 	case InReview:
 		return []string{InProgress, Completed, Blocked, Failed, WontFix}
 	case Blocked:
-		return []string{Design, Ready, WontFix}
+		return []string{Design, Ready, WontFix, Completed}
 	case Failed:
-		return []string{Ready, WontFix}
+		return []string{Ready, WontFix, Completed}
 	case Completed, WontFix:
 		return []string{Design, Ready}
 	}
@@ -566,7 +566,10 @@ func (s *Service) RecordOutput(ctx context.Context, id string, o OutputInput, ac
 // has nothing more to produce and nothing is open, it completes and its
 // remaining steps are canceled, whatever step its graph was on. Closed
 // without merging blocks an item being worked, with the pull request as the
-// reason, so a person decides; it never completes it. A status the output
+// reason, so a person decides; it never completes it. A merge also
+// completes a failed or blocked item once every output has landed (none open
+// or closed), naming the pull request as the reason: a person fixed and
+// merged what the factory gave up on. A status the output
 // already has changes nothing, so the same observation twice has no effect.
 // A pull request the item did not record is ErrNotFound.
 func (s *Service) ObservePull(ctx context.Context, id string, o OutputInput, actor Actor) (changed bool, err error) {
@@ -601,6 +604,13 @@ func (s *Service) ObservePull(ctx context.Context, id string, o OutputInput, act
 				return nil
 			}
 			_, err := transition(ctx, q, item, Blocked, "pull request "+o.URL+" was closed without merging", actor, EventTransition, nil)
+			return err
+		}
+		if item.State == Failed || item.State == Blocked {
+			outputs[i].Status = o.Status
+			if !slices.ContainsFunc(outputs, func(out db.WorkOutput) bool { return out.Status != OutputMerged }) {
+				_, err = transition(ctx, q, item, Completed, "pull request "+o.URL+" was merged", actor, EventTransition, nil)
+			}
 			return err
 		}
 		_, err = settle(ctx, q, item, actor)

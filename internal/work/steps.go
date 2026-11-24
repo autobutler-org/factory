@@ -612,8 +612,8 @@ func (s *Service) Replan(ctx context.Context, itemID string, actor Actor) (Graph
 	return view, err
 }
 
-// PollPulls returns the open pull requests of the items being worked, for
-// the server's poller, highest-priority item first. The newest pull request
+// PollPulls returns the open pull requests of the items being worked,
+// blocked or failed, for the server's poller, highest-priority item first. The newest pull request
 // of each repository carries the ready wait step of its chain, if any.
 func (s *Service) PollPulls(ctx context.Context) ([]db.PollPullsRow, error) {
 	rows, err := db.New(s.pool).PollPulls(ctx, plan.WaitKinds())

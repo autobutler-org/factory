@@ -220,9 +220,9 @@ stay readable; they do not count against the cap.
 ### Polling the code host
 
 The cluster has no public address, so GitHub's webhooks cannot reach it; the launcher asks instead. A poll reads
-every open pull request output of the items in `in_progress` or `in_review` (`work.Service.PollPulls`), highest
-priority first, with one `codehost.Host.PullStatus` request each ([codehost.md](codehost.md#pull-request-status)),
-and acts on what it sees. Each change is made as the actor `system/poller`, and its event says what the poller saw.
+every open pull request output of the items in `in_progress`, `in_review`, `blocked` or `failed`
+(`work.Service.PollPulls`), highest priority first, with one `codehost.Host.PullStatus` request each
+([codehost.md](codehost.md#pull-request-status)), and acts on what it sees. Each change is made as the actor `system/poller`, and its event says what the poller saw.
 
 | Observed | Action |
 | --- | --- |
@@ -233,6 +233,8 @@ and acts on what it sees. Each change is made as the actor `system/poller`, and 
 | The pull request is approved (GitHub's review decision; with no review rule, an approval and no change request) | completes the ready `await_approval` |
 | The pull request is merged, by the factory, its merge queue or a person | records the output `merged` (`work.Service.ObservePull`) with the head SHA it saw; once every output of the item has landed, the item completes and its remaining steps are canceled, whatever wait step it was on |
 | The pull request is closed without merging | records the output `closed` and moves the item to `blocked` with the reason `pull request <url> was closed without merging` |
+| The pull request of a `blocked` or `failed` item is merged | records the output `merged`; once every output of the item is merged (none open or closed), the item completes with the reason `pull request <url> was merged` |
+| The pull request of a `blocked` or `failed` item is closed | records the output `closed`; the item stays where it is |
 
 - **Which checks count.** The base branch's required checks, from branch protection and rulesets, matched by name;
   a required check that has not reported yet is pending. When none is required (or protection cannot be read),
@@ -249,6 +251,10 @@ and acts on what it sees. Each change is made as the actor `system/poller`, and 
   something the factory should retry on its own (a person closed it on purpose, or by mistake). `blocked` is the
   state for "a person must look": they reopen the pull request and move the item back to `ready` to plan it again,
   or move it to `wont_fix`. The item is never completed by a close, even when its other outputs have merged.
+- **After the factory gives up.** A `failed` or `blocked` item keeps no steps, so nothing of its graph waits, but its
+  open pull requests are still polled: a person may correct the change or its description and merge it, and the item
+  then completes instead of staying `failed`. Polling stops once each pull request is merged or closed, so the cost is
+  one request per poll per open pull request, as for an item in review.
 - **Several repositories.** Each pull request is read and recorded on its own; the item completes only when all of
   its outputs have landed, so one repository's merge leaves the item `in_review` while another's is open.
 - **Idempotent.** `ObservePull` changes nothing when the output already has the observed status, and

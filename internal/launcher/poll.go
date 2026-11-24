@@ -16,8 +16,8 @@ import (
 // poller is the actor of every change a poll makes.
 var poller = work.Actor{Kind: work.ActorSystem, ID: "poller"}
 
-// poll reads every open pull request of the items being worked from the
-// code host, one request each, and acts on what it sees: a merge or a close
+// poll reads every open pull request of the items being worked, blocked or
+// failed from the code host, one request each, and acts on what it sees: a merge or a close
 // is recorded (work.Service.ObservePull), and an open one may complete its
 // chain's wait step. It returns how
 // many changes it made. A pull request the code host cannot answer for is

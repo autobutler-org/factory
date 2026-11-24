@@ -218,6 +218,35 @@ func TestPollMergedByAPerson(t *testing.T) {
 	}
 }
 
+// TestPollMergedAfterTheItemFailed completes a failed item when a person
+// fixes and merges its pull request: the poller keeps watching an open pull
+// request after the item fails, and stops once it has merged.
+func TestPollMergedAfterTheItemFailed(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, 4)
+	item := e.create(t, "o/a")
+	e.pass(t)
+	e.drive(t, item.ID, item.ID+"/o/a", "o/a/await_checks-1")
+	if _, err := e.svc.Transition(ctx, item.ID, work.Failed, "the checks failed on the last round", work.Actor{Kind: work.ActorSystem, ID: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	host := openPull()
+	e.polled(host)
+	e.l.PollInterval = 0
+	if r := e.pass(t); r.Polled != 0 || e.itemState(t, item.ID) != work.Failed {
+		t.Fatalf("pass with the pull request open = %+v; want the failed item left alone", r)
+	}
+	if err := host.MergePull(ctx, 1); err != nil { // by a person
+		t.Fatal(err)
+	}
+	if r := e.pass(t); r.Polled != 1 || e.itemState(t, item.ID) != work.Completed {
+		t.Fatalf("pass after the merge = %+v, item %s; want it completed", r, e.itemState(t, item.ID))
+	}
+	if r := e.pass(t); r.Polled != 0 {
+		t.Errorf("a later pass = %+v; a merged pull request is not polled", r)
+	}
+}
+
 // TestPollClosedWithoutMerge blocks the item, naming the pull request, so a
 // person decides whether to reopen it, start over or drop the item.
 func TestPollClosedWithoutMerge(t *testing.T) {

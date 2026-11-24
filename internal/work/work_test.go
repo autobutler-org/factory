@@ -50,8 +50,8 @@ func TestTransitionTable(t *testing.T) {
 		work.Ready:      {work.InProgress, work.Design, work.Blocked, work.WontFix},
 		work.InProgress: {work.InReview, work.Ready, work.Blocked, work.Failed, work.Completed},
 		work.InReview:   {work.InProgress, work.Completed, work.Blocked, work.Failed, work.WontFix},
-		work.Blocked:    {work.Design, work.Ready, work.WontFix},
-		work.Failed:     {work.Ready, work.WontFix},
+		work.Blocked:    {work.Design, work.Ready, work.WontFix, work.Completed},
+		work.Failed:     {work.Ready, work.WontFix, work.Completed},
 		work.Completed:  {work.Design, work.Ready},
 		work.WontFix:    {work.Design, work.Ready},
 	}
