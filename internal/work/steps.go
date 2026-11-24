@@ -277,7 +277,7 @@ func schedule(ctx context.Context, q *db.Queries, graphID string) error {
 	status := make(map[string]plan.Status, len(steps))
 	for i, st := range steps {
 		g.Steps[i] = plan.Step{Key: st.Key, Kind: st.Kind, Condition: st.Condition, DependsOn: deps[st.ID]}
-		status[st.Key] = plan.Status{State: st.State, Verdict: plan.Verdict(st.Result)}
+		status[st.Key] = plan.Status{State: st.State, Verdict: plan.Verdict(st.Result), GateChanged: plan.GateChanged(st.Result)}
 	}
 	changes := plan.Next(g, status)
 	for _, st := range steps {

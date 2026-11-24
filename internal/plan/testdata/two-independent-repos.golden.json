@@ -225,6 +225,18 @@
       ]
     },
     {
+      "key": "o/quark/await_approval",
+      "kind": "await_approval",
+      "params": {
+        "repo": "o/quark"
+      },
+      "sandbox_key": "",
+      "condition": "gate changed",
+      "depends_on": [
+        "o/quark/await_checks-2"
+      ]
+    },
+    {
       "key": "o/quark/merge",
       "kind": "merge",
       "params": {
@@ -232,7 +244,7 @@
       },
       "sandbox_key": "",
       "depends_on": [
-        "o/quark/await_checks-2"
+        "o/quark/await_approval"
       ]
     },
     {
@@ -458,6 +470,18 @@
       ]
     },
     {
+      "key": "o/web/await_approval",
+      "kind": "await_approval",
+      "params": {
+        "repo": "o/web"
+      },
+      "sandbox_key": "",
+      "condition": "gate changed",
+      "depends_on": [
+        "o/web/await_checks-2"
+      ]
+    },
+    {
       "key": "o/web/merge",
       "kind": "merge",
       "params": {
@@ -465,7 +489,7 @@
       },
       "sandbox_key": "",
       "depends_on": [
-        "o/web/await_checks-2"
+        "o/web/await_approval"
       ]
     }
   ]

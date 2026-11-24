@@ -339,18 +339,26 @@ func (t *tree) clean(ctx context.Context) (bool, error) {
 	return out == "", err
 }
 
-// changed lists the paths an uncommitted change modifies or deletes,
-// including the old side of a rename; a new file is not listed. It stages
-// the change to see them.
-func (t *tree) changed(ctx context.Context) ([]string, error) {
-	if _, err := t.git(ctx, t.dir, "add", "-A"); err != nil {
+// changedBy lists the paths the branch's newest commit with subject, after
+// the base, modifies or deletes, including the old side of a rename; a new
+// file is not listed. With no such commit it lists none.
+func (t *tree) changedBy(ctx context.Context, subject string) ([]string, error) {
+	out, err := t.git(ctx, t.dir, "log", "--format=%H %s", t.baseRef()+"..HEAD")
+	if err != nil {
 		return nil, err
 	}
-	out, err := t.git(ctx, t.dir, "diff", "--cached", "--no-renames", "--diff-filter=a", "--name-only")
-	if err != nil || out == "" {
-		return nil, err
+	for line := range strings.SplitSeq(out, "\n") {
+		hash, s, _ := strings.Cut(line, " ")
+		if s != subject {
+			continue
+		}
+		files, err := t.git(ctx, t.dir, "diff-tree", "--no-commit-id", "-r", "--no-renames", "--diff-filter=a", "--name-only", hash)
+		if err != nil || files == "" {
+			return nil, err
+		}
+		return strings.Split(files, "\n"), nil
 	}
-	return strings.Split(out, "\n"), nil
+	return nil, nil
 }
 
 // discard drops every uncommitted change, as after a review that must leave

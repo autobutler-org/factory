@@ -62,6 +62,12 @@ const checkRounds = 2
 // fix rounds for a failing gate.
 const gateRounds = 3
 
+// ConditionGateChanged is the condition of an await_approval step planned
+// for a chain that merges without approval: it runs only when a step before
+// it in the chain changed a file that defines the gate (GateChanged), and is
+// skipped otherwise, so a changed gate always waits for a person.
+const ConditionGateChanged = "gate changed"
+
 // ErrInvalidGraph is returned for inputs that cannot be planned and for a
 // graph that breaks the rules: duplicate keys, missing dependencies, cycles,
 // unknown kinds, or conditions on steps that are not ancestors.
@@ -133,7 +139,8 @@ type Step struct {
 	// at the same time. Empty for steps that need no sandbox.
 	SandboxKey string `json:"sandbox_key"`
 	// Condition, when set, is "<key> == <verdict>": the step runs only if that
-	// step succeeded with that verdict, and is skipped otherwise.
+	// step succeeded with that verdict, and is skipped otherwise. It may
+	// instead be ConditionGateChanged.
 	Condition string   `json:"condition,omitempty"`
 	DependsOn []string `json:"depends_on"`
 }
@@ -190,6 +197,8 @@ func Plan(item Item, configs map[string]RepoConfig, t Template) (Graph, error) {
 				c.rounds(Gate, gateRounds, "fix-gate", VerdictFail)
 			case kind == AwaitChecks:
 				c.rounds(AwaitChecks, checkRounds, "fix-checks", VerdictFail)
+			case kind == AwaitApproval && !cfg.RequireApproval && cfg.Merge:
+				c.add(kind, kind, map[string]any{"repo": repo}, ConditionGateChanged)
 			case kind == Review, kind == AwaitApproval && !cfg.RequireApproval, kind == Merge && !cfg.Merge:
 			default:
 				params := map[string]any{"repo": repo}
@@ -323,7 +332,7 @@ func (g Graph) Validate() error {
 		}
 	}
 	for _, s := range g.Steps {
-		if s.Condition == "" {
+		if s.Condition == "" || s.Condition == ConditionGateChanged {
 			continue
 		}
 		on, _, ok := strings.Cut(s.Condition, " == ")
@@ -344,10 +353,11 @@ func ancestor(byKey map[string]Step, of, candidate string) bool {
 }
 
 // Status is a step as the scheduler sees it: its state and, once succeeded,
-// the verdict in its result.
+// the verdict in its result and whether it changed the gate (GateChanged).
 type Status struct {
-	State   string
-	Verdict string
+	State       string
+	Verdict     string
+	GateChanged bool
 }
 
 // Next returns the pending steps that change state given status (keyed by
@@ -356,6 +366,10 @@ type Status struct {
 // unblock further steps, so it repeats until nothing changes. A failed or
 // canceled dependency leaves its dependents pending.
 func Next(g Graph, status map[string]Status) map[string]string {
+	byKey := make(map[string]Step, len(g.Steps))
+	for _, s := range g.Steps {
+		byKey[s.Key] = s
+	}
 	current := make(map[string]Status, len(status))
 	for k, v := range status {
 		current[k] = v
@@ -373,6 +387,9 @@ func Next(g Graph, status map[string]Status) map[string]string {
 					next = Skipped
 				}
 			}
+			if s.Condition == ConditionGateChanged && !gateChangedBefore(byKey, s.Key, current) {
+				next = Skipped
+			}
 			current[s.Key] = Status{State: next}
 			changes[s.Key] = next
 			changed = true
@@ -388,6 +405,27 @@ func depsDone(s Step, status map[string]Status) bool {
 		}
 	}
 	return true
+}
+
+// gateChangedBefore says whether an ancestor of key succeeded having
+// changed the gate.
+func gateChangedBefore(byKey map[string]Step, key string, status map[string]Status) bool {
+	for k, st := range status {
+		if st.GateChanged && st.State == Succeeded && ancestor(byKey, key, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// GateChanged reads from a step's result whether it changed a file that
+// defines the gate: a non-empty "gate_changed".
+func GateChanged(result json.RawMessage) bool {
+	var r struct {
+		GateChanged []string `json:"gate_changed"`
+	}
+	_ = json.Unmarshal(result, &r)
+	return len(r.GateChanged) > 0
 }
 
 // RoundsExhausted says whether a step that succeeded with result should
